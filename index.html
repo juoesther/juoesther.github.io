@@ -2518,19 +2518,24 @@ var Logic_ = (function () {
     function reportKey(author, kind, date, project, content) {
       return [author, kind, date, project, str(content).replace(/\s+/g, ' ').trim()].join('|');
     }
-    // 붙여넣기로 나눈 여러 줄을 한 번에 저장 (본인 업무). 하나라도 잘못되면 아무것도 저장하지 않음
-    // 이미 같은 날·같은 사업·같은 내용이 있으면 그 줄은 건너뜀
+    // 붙여넣기로 나눈 여러 줄을 한 번에 저장 (본인 업무, 또는 team이면 팀 업무). 하나라도 잘못되면 아무것도 저장하지 않음
+    // 이미 같은 날·같은 사업·같은 내용이 있으면 그 줄은 건너뜀 (내 업무는 내 것끼리, 팀 업무는 누가 썼든 팀 업무끼리)
     var BATCH_MAX = 200;
     function saveReportsBatch(u, p) {
       if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      var team = p.team === true || p.team === 'Y';
+      if (team && !canWriteTeam(u)) fail('팀 업무는 PI·PEO·PM만 쓸 수 있어요.');
       var items = Array.isArray(p.items) ? p.items : [];
       if (!items.length) fail('저장할 줄이 없어요.');
       if (items.length > BATCH_MAX) fail('한 번에 ' + BATCH_MAX + '줄까지 저장할 수 있어요.');
-      var kind = REPORT_KINDS.indexOf(str(p.kind)) >= 0 ? str(p.kind) : '일간';
+      var kind = team ? '주간' : REPORT_KINDS.indexOf(str(p.kind)) >= 0 ? str(p.kind) : '일간'; // 팀 업무는 주간만
+      var who = team ? '#팀업무' : u.name; // 같은 줄인지 볼 때의 주인
       return store.withLock(function () {
         var projects = store.list('projects');
         var have = {};
-        store.list('reports').forEach(function (r) { if (!r.linkKey && r.team !== 'Y') have[reportKey(r.author, r.kind, r.date, r.project, r.content)] = true; });
+        store.list('reports').forEach(function (r) {
+          if (!r.linkKey && (r.team === 'Y') === team) have[reportKey(team ? who : r.author, r.kind, r.date, r.project, r.content)] = true;
+        });
         var add = [], skipped = 0, now = env.now(), today = env.today();
         items.forEach(function (x, i) {
           var line = (i + 1) + '번째 줄: ';
@@ -2544,14 +2549,20 @@ var Logic_ = (function () {
           var content;
           try { content = validateText(x.content, '세부내용', 1000, true); } catch (e) { fail(line + (e.message || e)); }
           var note = validateText(x.note, '비고', 300, false);
-          var key = reportKey(u.name, kind, date, project, content);
+          var key = reportKey(who, kind, date, project, content);
           if (have[key]) { skipped++; return; }
           have[key] = true;
-          add.push({ id: env.uuid(), author: u.name, kind: kind, date: date, project: project, deadline: cleanDate(x.deadline),
+          var obj = { id: env.uuid(), author: u.name, kind: kind, date: date, project: project, deadline: cleanDate(x.deadline),
             content: content, note: note, status: status, progress: String(prog), doneDate: status === '완료' ? today : '',
-            createdAt: now, updatedAt: now });
+            createdAt: now, updatedAt: now };
+          if (team) obj.team = 'Y';
+          add.push(obj);
         });
-        if (add.length) store.append('reports', add);
+        if (add.length) {
+          store.append('reports', add);
+          // 팀 업무는 진행 기록에 ‘등록’을 남김
+          if (team) store.append('reportLogs', add.map(function (x) { return { id: env.uuid(), reportId: x.id, changes: '등록', status: x.status, progress: x.progress, memo: '', author: u.name, createdAt: now }; }));
+        }
         return { state: loadFor(u), info: { added: add.length, skipped: skipped } };
       });
     }
@@ -7258,14 +7269,17 @@ var Logic_ = (function () {
     return out;
   }
   // Claude(또는 다른 AI)에 넣을 지시문: 자유롭게 쓴 업무를 위 형식으로 정리하게 함
-  function rpPromptText(kind) {
+  // team: 팀 업무 붙여넣기용 (최근 문장도 팀 업무에서, 내 담당 사업은 빼고)
+  function rpPromptText(kind, team) {
     var names = rpProjects().map(function (p) { return p.name; });
-    var mine = rpAssigned(S.user.name);
+    var mine = team ? [] : rpAssigned(S.user.name);
     var since = rpAddDays(today(), -30), seen = {}, recent = [];
-    (S.data.reports || []).filter(function (r) { return !r.linkKey && r.team !== 'Y' && r.author === S.user.name && r.date >= since && r.project; })
+    (S.data.reports || []).filter(function (r) {
+      return !r.linkKey && (team ? r.team === 'Y' : r.team !== 'Y' && r.author === S.user.name) && r.date >= since && r.project;
+    })
       .sort(function (a, b) { return a.date < b.date ? 1 : -1; })
       .forEach(function (r) { if (recent.length < 15 && !seen[r.content]) { seen[r.content] = true; recent.push('[' + r.project + '] ' + r.content); } });
-    return (kind === '주간' ? '아래에 이번 주 내 업무를 적을게.' : '아래에 내가 한 업무를 적을게.') + ' 다음 형식으로만 정리해서 출력해. 다른 말은 붙이지 마.\n\n' +
+    return (team ? '아래에 이번 주 팀 업무를 적을게.' : kind === '주간' ? '아래에 이번 주 내 업무를 적을게.' : '아래에 내가 한 업무를 적을게.') + ' 다음 형식으로만 정리해서 출력해. 다른 말은 붙이지 마.\n\n' +
       '[사업약어]\n- 업무 내용(to 받는 사람)\n\n규칙\n' +
       '· 사업약어는 이 중에서만: ' + names.join(', ') + '\n' +
       '· 어느 사업인지 확실하지 않으면 [?]로 적어. 추측해서 배정하지 마.\n' +
@@ -7275,8 +7289,8 @@ var Logic_ = (function () {
       '· 진행률이나 상태는 쓰지 마.\n' +
       (kind === '주간' ? '· 날짜 줄은 쓰지 마.\n' : '· 여러 날 치면 10/28처럼 날짜를 한 줄로 먼저 적고 그 아래에 그날 업무를 적어.\n') +
       (mine.length ? '\n참고: 내 담당 사업: ' + mine.join(', ') + '\n' : '') +
-      (recent.length ? '\n참고: 최근 내가 쓴 문장\n' + recent.join('\n') + '\n' : '') +
-      '\n내 업무:\n';
+      (recent.length ? '\n참고: 최근 ' + (team ? '팀 업무' : '내가 쓴') + ' 문장\n' + recent.join('\n') + '\n' : '') +
+      (team ? '\n팀 업무:\n' : '\n내 업무:\n');
   }
 
   /* ---------- 진행현황표 ---------- */
@@ -7414,14 +7428,11 @@ var Logic_ = (function () {
     return payload;
   }
   // 쓰는 중인 내용 기억 (자동 새로고침으로 화면을 다시 그려도 남게)
-  // 내 업무 기록칸(rp-form) → S.rp.draft, 팀 업무 추가 칸(rp-team-form) → S.rp.teamDraft
-  function rpDraftKey(form) { return form.id === 'rp-form' ? 'draft' : form.id === 'rp-team-form' ? 'teamDraft' : ''; }
   function rpSaveDraft(form) {
-    var key = rpDraftKey(form);
-    if (!key) return;
+    if (form.id !== 'rp-form') return;
     // dlSet: 마감일을 직접 고쳤는지 (안 고쳤으면 날짜를 바꿀 때 마감일도 그날 / 그 주 금요일로 따라감)
-    S.rp[key] = { project: form.project.value, deadline: form.deadline.value, content: form.content.value, note: form.note.value, status: rpCurStatus(form), progress: form.progress.value,
-      dlSet: !!(S.rp[key] && S.rp[key].dlSet) };
+    S.rp.draft = { project: form.project.value, deadline: form.deadline.value, content: form.content.value, note: form.note.value, status: rpCurStatus(form), progress: form.progress.value,
+      dlSet: !!(S.rp.draft && S.rp.draft.dlSet) };
   }
   function rpFormEvent(e) {
     var f = e.target.closest && e.target.closest('form.rp-form-box');
@@ -7430,7 +7441,7 @@ var Logic_ = (function () {
     if (e.type === 'input' && e.target.name === 'progRange') f.progress.value = e.target.value;
     if (e.type === 'input' && e.target.name === 'progress') f.progRange.value = e.target.value;
     rpSaveDraft(f);
-    if (e.target.name === 'deadline' && rpDraftKey(f)) S.rp[rpDraftKey(f)].dlSet = true;
+    if (e.target.name === 'deadline' && f.id === 'rp-form') S.rp.draft.dlSet = true;
   }
   document.addEventListener('change', rpFormEvent);
   document.addEventListener('input', rpFormEvent);
@@ -7461,7 +7472,7 @@ var Logic_ = (function () {
   }
 
   /* ---------- 팀 업무: PI·PEO·PM이 쓰고 PEO 모두가 공지처럼 보는 주간 업무 ----------
-   * 주간(그 주) 단위만. PI·PEO·PM: 왼쪽 추가 칸 + 표(눌러서 고치기, + 다음 단계)
+   * 주간(그 주) 단위만. PI·PEO·PM: 왼쪽 붙여넣기 칸(내 업무 붙여넣기와 같은 형식) + 표(눌러서 고치기, + 다음 단계)
    * 연구자: 표만 (고치기·다음 단계 없이 보기만, 진행 기록은 ‘기록 n’으로 볼 수 있음)
    * 내 업무 > 주간 업무와는 연동되지 않음 */
   function rpTeamView(d) {
@@ -7471,12 +7482,9 @@ var Logic_ = (function () {
       '<span class="spacer"></span>' + copyBtn + '</div>' +
       rpTable(items, 'project', true, '작성자', pm ? '이 주에 올린 팀 업무가 없어요. 왼쪽에서 추가하세요.' : '이 주에 올라온 팀 업무가 없어요', pm) + '</section>';
     if (!pm) return listBox;
-    // 추가 칸: 마감일 기본값은 그 주 금요일 (직접 고치면 고친 값 유지)
-    var dr = S.rp.teamDraft || null, dl = dr && dr.dlSet ? dr.deadline : rpWeekEnd(d);
+    // 팀 업무 추가: 내 업무(주간) 붙여넣기와 같은 형식. 저장하면 그 주(월요일)로, 마감일은 그 주 금요일
     var formBox = '<section class="panel"><div class="panel-head"><h2>팀 업무 추가</h2><span class="h-sub">' + esc(rpScopeLabel('주간')) + '</span></div>' +
-      '<form class="form rp-form-box rp-pad" id="rp-team-form" autocomplete="off" novalidate>' +
-      rpFields(dr ? { project: dr.project, deadline: dl, content: dr.content, note: dr.note, status: dr.status, progress: dr.progress } : null, dl) +
-      '<button type="button" class="btn primary" data-act="rp-team-add">＋ 팀 업무 추가</button></form></section>';
+      rpPasteBox(d, '주간', true) + '</section>';
     return '<div class="rp-team-grid">' + formBox + listBox + '</div>';
   }
   // 팀 업무 복사: [사업] 아래 - 내용 (모든 계정 같음)
@@ -7484,15 +7492,22 @@ var Logic_ = (function () {
     var g = rpGroup(rpTeam(d), 'project');
     return g.order.map(function (pn) { return '[' + pn + ']\n' + g.by[pn].slice().sort(rpByOrder).map(rpLine).join('\n'); }).join('\n\n');
   }
-  // 붙여넣기 칸 (업무 기록 패널 안): 저장을 누르면 바로 나눠서 저장, 고칠 것은 내 진행현황 카드를 눌러 고침
-  function rpPasteBox(d, kind) {
-    var sample = kind === '일간' ? '10/28\n[HBM]\n- 중간보고서 초안 작성(to 김주무관)\n- 자문회의 자료 정리\n[KIND]\n- 마약류 데이터 정제' : '[HBM]\n- 3차년도 중간보고서 작성\n[KIND]\n- 분석 결과 정리';
+  // 붙여넣기 칸: 저장을 누르면 바로 나눠서 저장, 고칠 것은 내 진행현황 카드(팀 업무는 표의 줄)를 눌러 고침
+  // team: 팀 업무 추가 칸 (쓰던 글은 S.rp.teamPasteText에 따로 기억)
+  function rpPasteBox(d, kind, team) {
+    var sample = team ? '[HBM]\n- 3차년도 중간보고서 취합 및 제출(to 세부책임자)\n- 주간회의 자료 취합\n[KIND]\n- 자문위원회 일정 조율'
+      : kind === '일간' ? '10/28\n[HBM]\n- 중간보고서 초안 작성(to 김주무관)\n- 자문회의 자료 정리\n[KIND]\n- 마약류 데이터 정제' : '[HBM]\n- 3차년도 중간보고서 작성\n[KIND]\n- 분석 결과 정리';
     return '<div class="rp-pad rp-paste">' +
-      '<textarea class="inp" id="rp-paste" rows="9" placeholder="' + esc(sample) + '" aria-label="업무 붙여넣기">' + esc(S.rp.pasteText || '') + '</textarea>' +
-      '<div class="rp-paste-acts"><button type="button" class="btn primary" data-act="rp-paste-save">저장</button>' +
-      '<button type="button" class="btn" data-act="rp-prompt" title="자유롭게 쓴 업무를 위 형식으로 정리해 달라는 지시문을 복사해요">⧉ Claude에 넣을 문장 복사</button></div></div>';
+      '<textarea class="inp" id="' + (team ? 'rp-team-paste' : 'rp-paste') + '" rows="9" placeholder="' + esc(sample) + '" aria-label="' + (team ? '팀 업무' : '업무') + ' 붙여넣기">' +
+      esc((team ? S.rp.teamPasteText : S.rp.pasteText) || '') + '</textarea>' +
+      '<div class="rp-paste-acts"><button type="button" class="btn primary" data-act="rp-paste-save"' + (team ? ' data-team="1"' : '') + '>저장</button>' +
+      '<button type="button" class="btn" data-act="rp-prompt"' + (team ? ' data-team="1"' : '') + ' title="자유롭게 쓴 업무를 위 형식으로 정리해 달라는 지시문을 복사해요">⧉ Claude에 넣을 문장 복사</button></div></div>';
   }
-  document.addEventListener('input', function (e) { if (e.target && e.target.id === 'rp-paste') S.rp.pasteText = e.target.value; });
+  document.addEventListener('input', function (e) {
+    if (!e.target) return;
+    if (e.target.id === 'rp-paste') S.rp.pasteText = e.target.value;
+    if (e.target.id === 'rp-team-paste') S.rp.teamPasteText = e.target.value;
+  });
 
   // 주간: 최근 4주 안 끝난 주간 업무 (진행도 100% 아니고 완료·보류 아님, 아직 이어받지 않은 것)
   function rpCarryCands(me, d) {
@@ -7798,12 +7813,14 @@ var Logic_ = (function () {
     'rp-view': function (el) { S.rp.view = el.getAttribute('data-tab'); renderView(); },
     // 업무 기록: 붙여넣기 / 한 줄 추가
     'rp-in': function (el) { S.rp.inMode = el.getAttribute('data-mode'); renderView(); },
-    // 붙여넣기 저장: 바로 사업·날짜별로 나눠 저장. 고칠 것은 내 진행현황 카드를 눌러 고침
+    // 붙여넣기 저장: 바로 사업·날짜별로 나눠 저장. 고칠 것은 내 진행현황 카드(팀 업무는 표의 줄)를 눌러 고침
     // 설명문 같은 줄(60자 넘거나 ‘~했습니다’)은 저장하지 않고 칸에 남겨 둠
-    'rp-paste-save': function () {
-      var ta = $('#rp-paste'), raw = ta ? ta.value : '', kind = S.rp.kind;
-      S.rp.pasteText = raw;
-      if (!raw.trim()) { toast('붙여넣을 업무를 적어 주세요.', 'error'); if (ta) ta.focus(); return; }
+    // data-team: 팀 업무 추가 칸 (PI·PEO·PM, 늘 주간 → 그 주 월요일로, 마감일은 그 주 금요일)
+    'rp-paste-save': function (el) {
+      var team = el.hasAttribute('data-team'), textKey = team ? 'teamPasteText' : 'pasteText';
+      var ta = $(team ? '#rp-team-paste' : '#rp-paste'), raw = ta ? ta.value : '', kind = team ? '주간' : S.rp.kind;
+      S.rp[textKey] = raw;
+      if (!raw.trim()) { toast('붙여넣을 ' + (team ? '팀 업무' : '업무') + '를 적어 주세요.', 'error'); if (ta) ta.focus(); return; }
       var parsed = rpParsePaste(raw, rpDay(), kind);
       var save = parsed.filter(function (x) { return !x.skip; }), keep = parsed.filter(function (x) { return x.skip; });
       if (!save.length) { toast('저장할 줄을 찾지 못했어요. [사업] 줄 아래에 - 업무 형식으로 적어 주세요.', 'error'); return; }
@@ -7811,22 +7828,25 @@ var Logic_ = (function () {
         return { date: x.date, project: x.project, content: x.content, note: x.note, status: x.status,
           progress: x.status === '완료' ? 100 : 0, deadline: kind === '일간' ? x.date : rpWeekEnd(x.date || rpDay()) };
       });
-      call('saveReportsBatch', { kind: kind, items: items }).then(function (res) {
+      call('saveReportsBatch', { kind: kind, items: items, team: team }).then(function (res) {
         // 저장 안 한 설명문 줄만 칸에 남김 (사업이 있었으면 [사업]을 붙여서)
-        S.rp.pasteText = keep.map(function (x) { return (x.project ? '[' + x.project + '] ' : '') + x.content + (x.note ? '(' + x.note + ')' : ''); }).join('\n');
+        S.rp[textKey] = keep.map(function (x) { return (x.project ? '[' + x.project + '] ' : '') + x.content + (x.note ? '(' + x.note + ')' : ''); }).join('\n');
         applyState(res);
         var info = res.info || {}, days = {}, noProj = save.filter(function (x) { return !x.project; }).length;
         save.forEach(function (x) { days[x.date] = (days[x.date] || 0) + 1; });
         var dk = Object.keys(days).sort();
-        toast((info.added || 0) + '줄 저장했어요' +
+        toast((info.added || 0) + (team ? '줄을 팀 업무에 올렸어요' : '줄 저장했어요') +
           (kind === '일간' && dk.length > 1 ? ' (' + dk.map(function (d) { return rpMD(d) + ' ' + days[d] + '줄'; }).join(' · ') + ')' : '') +
           (info.skipped ? ' · 이미 있는 ' + info.skipped + '줄은 건너뜀' : '') +
           (noProj ? ' · 사업을 못 찾은 ' + noProj + '줄은 ‘기타’로' : '') +
           (keep.length ? ' · 설명문 같은 ' + keep.length + '줄은 저장하지 않고 칸에 남겨 뒀어요' : '') +
-          '. 고칠 것은 내 진행현황에서 눌러 고치세요.');
+          (team ? '. 고칠 것은 오른쪽 표에서 눌러 고치세요.' : '. 고칠 것은 내 진행현황에서 눌러 고치세요.'));
       }, noop);
     },
-    'rp-prompt': function () { copyText(rpPromptText(S.rp.kind), '지시문을 복사했어요. Claude 대화창에 붙여 넣고, 그 아래에 한 일을 자유롭게 적으세요.'); },
+    'rp-prompt': function (el) {
+      var team = el.hasAttribute('data-team');
+      copyText(rpPromptText(team ? '주간' : S.rp.kind, team), '지시문을 복사했어요. Claude 대화창에 붙여 넣고, 그 아래에 ' + (team ? '이번 주 팀 업무' : '한 일') + '를 자유롭게 적으세요.');
+    },
     // 주간: 지난 4주 안 끝난 업무
     'rp-carry-fold': function () { S.rp.carryOpen = S.rp.carryOpen === false; renderView(); },
     'rp-carry': function () {
@@ -7871,21 +7891,6 @@ var Logic_ = (function () {
     'rp-stack': function (el) { rpToggleStack(el.getAttribute('data-id')); },
     'rp-step': function (el) { openReportStep(el.getAttribute('data-id')); },
     'rp-log-edit': function (el) { openLogEdit(el.getAttribute('data-id')); },
-    // 팀 업무 추가 (PI·PEO·PM): 그 주(월요일)로 저장, PEO 모두에게 보임
-    'rp-team-add': function () {
-      var form = $('#rp-team-form');
-      if (!form) return;
-      var payload = rpPayload(form);
-      if (!payload) return;
-      payload.team = true; payload.kind = '주간'; payload.date = rpDay();
-      S.rp.lastProject = payload.project;
-      call('saveReport', payload).then(function (res) {
-        S.rp.teamDraft = null;
-        applyState(res);
-        toast('팀 업무를 올렸어요. PEO 모두에게 보여요.');
-        var f2 = $('#rp-team-form'); if (f2) f2.content.focus();
-      }, noop);
-    },
     'rp-log-del': function (el) { deleteLog(el.getAttribute('data-id')); },
     'rp-team-copy': function () { copyText(rpTeamCopyText(rpDay()), '팀 업무를 복사했어요. 메신저나 메일에 붙여 넣으세요.'); },
     'rp-edit': function (el) { openReportModal(el.getAttribute('data-id')); },
