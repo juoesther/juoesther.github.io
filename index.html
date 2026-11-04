@@ -422,8 +422,9 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .rp-scope { font-size: 15px; color: var(--ink); }
 .rp-grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.1fr) minmax(320px, 1.1fr); gap: 14px; align-items: start; }
 .rp-grid .panel { margin-bottom: 0; }
-/* 업무보고 > 팀 업무: 왼쪽 추가 칸, 오른쪽 사업별 진행현황표 */
-.rp-team-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+/* 업무보고 > 팀 업무: PI·PEO·PM은 왼쪽 추가 칸 + 오른쪽 사업별 표, 연구자는 표만 */
+.rp-team-grid { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.rp-team-grid .panel { margin-bottom: 0; min-width: 0; }
 .tag.rp-week-tag { background: var(--accent-wash); color: var(--accent-strong); border-color: var(--accent); font-weight: 700; height: 32px; padding: 0 14px; display: inline-flex; align-items: center; }
 /* 팀 업무 수정 기록 스택 (진행상태 옆 ‘기록 n’, 아래 줄에 최신부터) */
 .rp-tbl td.rp-st-cell { white-space: nowrap; }
@@ -498,7 +499,7 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .rp-tbl td.rp-who { white-space: nowrap; color: var(--ink-2); }
 .rp-tbl tr.clickable, .oc-tbl tr.clickable { cursor: pointer; }
 .rp-tbl tr.clickable:hover td, .oc-tbl tr.clickable:hover td { background: var(--accent-wash); }
-@media (max-width: 1100px) { .rp-grid { grid-template-columns: 1fr; } .rp-cards { max-height: none; } }
+@media (max-width: 1100px) { .rp-grid, .rp-team-grid { grid-template-columns: 1fr; } .rp-cards { max-height: none; } }
 
 /* 성과관리 */
 .form-grid.four { grid-template-columns: repeat(4, 1fr); }
@@ -1041,8 +1042,8 @@ var Logic_ = (function () {
         ['linkKey', '연동원본'],
         ['hidden', '숨김'], // 'Y': 연동 기록을 업무보고에서만 지움 (원래 기록은 그대로)
         ['carryFrom', '이월원본'], // 지난 주 안 끝난 주간 업무를 이번 주로 가져온 경우 그 원래 업무 ID
-        ['team', '팀업무'], // 'Y': 팀 업무 (PEO 모두에게 공유. 내 업무·전체 현황에는 안 들어감)
-        ['teamHidden', '팀업무숨김']] // 'Y': 내 업무의 주간 업무를 팀 업무 화면에서만 뺌 (내 업무에는 그대로)
+        ['team', '팀업무']] // 'Y': 팀 업무 (PI·PEO·PM이 쓰고 PEO 모두가 봄. 내 업무·전체 현황에는 안 들어감)
+        // 팀업무숨김(teamHidden)은 없앰 (주간 업무가 팀 업무에 연동되지 않으므로. Supabase는 열도 지움: supa-core.js DROPPED)
     },
     // 팀 업무 수정 기록: 팀 업무를 등록·수정할 때마다 누가·언제·무엇을 바꿨는지 (최신이 맨 위, 이전은 뒤에 쌓아 보여 줌)
     reportLogs: {
@@ -1396,11 +1397,15 @@ var Logic_ = (function () {
         logs: pick('logs', mineSet),
         milestones: pick('milestones', mineSet),
         caseNotes: pick('caseNotes', maintSet), // PEO만 받음
-        // 업무보고: PEO만. PI·PEO·PM은 전원 것(현황판), 연구자는 본인 것만
-        // 팀 업무(team = 'Y')와 모든 사람의 주간 업무(팀 업무 화면에 함께 보임)는 PEO 모두에게. 일간 업무는 본인·PI·PM만
+        // 업무보고: PEO만. PI·PEO·PM은 전원 것(전체 현황), 연구자는 본인 것만
+        // 팀 업무(team = 'Y', PI·PEO·PM이 씀)는 PEO 모두에게. 내 업무(일간·주간)는 본인·PI·PEO·PM만
         reports: biz ? store.list('reports').filter(function (r) { return isPM || r.author === u.name || sharedReport(r); }).map(function (r) { return clean('reports', r); }) : [],
-        // 팀 업무 수정 기록 (PEO 모두)
-        reportLogs: biz ? store.list('reportLogs').map(function (x) { return clean('reportLogs', x); }) : [],
+        // 팀 업무 진행 기록 (PEO 모두, 팀 업무 것만)
+        reportLogs: biz ? (function () {
+          var team = {};
+          store.list('reports').forEach(function (r) { if (sharedReport(r)) team[r.id] = true; });
+          return store.list('reportLogs').filter(function (x) { return team[x.reportId]; }).map(function (x) { return clean('reportLogs', x); });
+        })() : [],
         // 업무보고의 사업 고르기: 담당이 아니어도 고를 수 있게 전체 과제 이름 (이름·구분·순서만)
         reportProjects: biz ? projects.map(function (p) { return { name: p.name, kind: kindOf(p), no: str(p.no) }; }) : [],
         outcomes: pick('outcomes', mineSet), // 성과관리: 볼 수 있는 과제만
@@ -2304,12 +2309,14 @@ var Logic_ = (function () {
     }
 
     /* --- 업무보고 (PEO): 일간·주간 업무 + 팀 업무 --- */
-    // 팀 업무 화면에 함께 보이는 업무: 팀 업무 + 내 업무에서 쓴 주간 업무(연동 아님)
-    function sharedReport(r) { return r.team === 'Y' || (r.kind === '주간' && !r.linkKey); }
+    // 팀 업무: PI·PEO·PM이 써서 PEO 모두(연구자 포함)에게 공지처럼 보여 주는 업무. 내 업무의 주간 업무와는 따로
+    function sharedReport(r) { return r.team === 'Y'; }
+    // 팀 업무를 쓰고·고치고·다음 단계를 남기는 사람: PI, PEO·PM (연구자는 보기만)
+    function canWriteTeam(u) { return u.role === 'PI' || (u.role === 'PM' && orgOf(u) === 'PEO'); }
     // 지울 수 있는 사람: 쓴 사람, PI, PEO·PM
-    function canDeleteReport(u, r) { return r.author === u.name || u.role === 'PI' || (u.role === 'PM' && orgOf(u) === 'PEO'); }
-    // 고칠 수 있는 사람: 팀 업무는 쓴 사람만 (다른 사람은 + 다음 단계로 내용만 더함), 내 업무는 쓴 사람·PI·PEO·PM
-    function canEditReport(u, r) { return r.team === 'Y' ? r.author === u.name : canDeleteReport(u, r); }
+    function canDeleteReport(u, r) { return r.author === u.name || canWriteTeam(u); }
+    // 고칠 수 있는 사람: 팀 업무는 PI·PEO·PM, 내 업무는 쓴 사람·PI·PEO·PM
+    function canEditReport(u, r) { return r.team === 'Y' ? canWriteTeam(u) : canDeleteReport(u, r); }
     // 팀 업무에서 바뀐 칸을 글로 (예: ‘진행상태: 대기 → 진행중 · 진행도: 0% → 30%’)
     var TEAM_LOG_FIELDS = [['project', '사업'], ['kind', '구분'], ['date', '날짜'], ['deadline', '마감일'], ['content', '세부내용'], ['note', '비고'],
       ['status', '진행상태'], ['progress', '진행도']];
@@ -2326,14 +2333,13 @@ var Logic_ = (function () {
       store.append('reportLogs', [{ id: env.uuid(), reportId: reportId, changes: changes, status: str(obj.status), progress: str(obj.progress),
         memo: str(memo), author: u.name, createdAt: env.now() }]);
     }
-    // 팀 업무 + 다음 단계: 진행상태·진행도를 바꾸고 진행 내용(선택)을 남김 → 수정 기록이 한 장씩 쌓임 (PEO 누구나)
-    // 팀 업무와 주간 업무(팀 업무 화면에 함께 보이는 것) 모두 됨
+    // 팀 업무 + 다음 단계: 진행상태·진행도를 바꾸고 진행 내용(선택)을 남김 → 수정 기록이 한 장씩 쌓임 (PI·PEO·PM)
     function addReportStep(u, p) {
-      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      if (!canWriteTeam(u)) fail('팀 업무는 PI·PEO·PM만 쓸 수 있어요.');
       return store.withLock(function () {
         var cur = store.list('reports').filter(function (x) { return x.id === str(p.id); })[0];
         if (!cur) fail('업무를 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.');
-        if (!sharedReport(cur)) fail('팀 업무와 주간 업무만 다음 단계를 남길 수 있어요.');
+        if (!sharedReport(cur)) fail('팀 업무만 다음 단계를 남길 수 있어요.');
         var status = REPORT_STATUSES.indexOf(str(p.status)) >= 0 ? str(p.status) : str(cur.status);
         var prog = status === '대기' ? 0 : status === '완료' ? 100 : Math.max(0, Math.min(100, Math.round(Number(str(p.progress)) || 0)));
         var memo = validateText(p.memo, '진행 내용', 1000, false);
@@ -2365,7 +2371,7 @@ var Logic_ = (function () {
     // 내가 남긴 기록 고치기: 진행 내용 + 진행상태·진행도.
     // 가장 최근 기록이면 업무의 진행상태·진행도도 함께 바뀜. 다음 기록의 ‘A → B’ 글도 맞춰 고침
     function updateReportLog(u, p) {
-      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      if (!canWriteTeam(u)) fail('팀 업무는 PI·PEO·PM만 쓸 수 있어요.');
       return store.withLock(function () {
         var cur = store.list('reportLogs').filter(function (x) { return x.id === str(p.id); })[0];
         if (!cur) fail('기록을 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.');
@@ -2397,26 +2403,13 @@ var Logic_ = (function () {
         return { state: loadFor(u), info: { latest: i === logs.length - 1 } };
       });
     }
-    // 내 업무의 주간 업무를 팀 업무 화면에서만 빼기·다시 넣기 (내 업무에는 그대로). 쓴 사람, PI·PEO·PM
-    function setTeamHidden(u, p) {
-      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
-      return store.withLock(function () {
-        var cur = store.list('reports').filter(function (x) { return x.id === str(p.id); })[0];
-        if (!cur) fail('업무를 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.');
-        if (cur.team === 'Y' || cur.kind !== '주간' || cur.linkKey) fail('내 업무에서 쓴 주간 업무만 팀 업무에서 뺄 수 있어요.');
-        if (!canDeleteReport(u, cur)) fail('쓴 사람과 PI·PEO·PM만 팀 업무에서 뺄 수 있어요.');
-        store.update('reports', cur.id, { teamHidden: p.hidden === true || p.hidden === 'Y' ? 'Y' : '' });
-        return { state: loadFor(u) };
-      });
-    }
-    // 기록 지우기: 남긴 사람, PI·PEO·PM. 가장 최근 기록이면 그 기록으로 바뀐 진행상태·진행도를 바로 전 기록 때로 되돌림
+    // 기록 지우기: PI·PEO·PM. 가장 최근 기록이면 그 기록으로 바뀐 진행상태·진행도를 바로 전 기록 때로 되돌림
     function deleteReportLog(u, p) {
-      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      if (!canWriteTeam(u)) fail('팀 업무는 PI·PEO·PM만 쓸 수 있어요.');
       return store.withLock(function () {
         var cur = store.list('reportLogs').filter(function (x) { return x.id === str(p.id); })[0];
         if (!cur) fail('이미 삭제된 기록이에요.');
         if (cur.changes === '등록') fail('등록 기록은 삭제할 수 없어요. 업무 자체를 지워 주세요.');
-        if (cur.author !== u.name && !canDeleteReport(u, { author: '' })) fail('본인이 남긴 기록만 삭제할 수 있어요.');
         var logs = store.list('reportLogs').filter(function (x) { return x.reportId === cur.reportId; })
           .sort(function (a, b) { return str(a.createdAt) < str(b.createdAt) ? -1 : str(a.createdAt) > str(b.createdAt) ? 1 : 0; });
         var i = logs.map(function (x) { return x.id; }).indexOf(cur.id), reverted = false;
@@ -2447,8 +2440,9 @@ var Logic_ = (function () {
           cur = store.list('reports').filter(function (x) { return x.linkKey === linkKey; })[0] || null; // 이미 고친 적 있으면 그걸 고침
           if (!cur && !canEditReport(u, { author: src.author })) fail('본인 업무만 고칠 수 있어요.');
         }
-        if (cur && !canEditReport(u, cur)) fail('본인이 쓴 업무만 고칠 수 있어요.');
+        if (cur && !canEditReport(u, cur)) fail(cur.team === 'Y' ? '팀 업무는 PI·PEO·PM만 고칠 수 있어요.' : '본인이 쓴 업무만 고칠 수 있어요.');
         var isTeam = cur ? cur.team === 'Y' : (p.team === true || p.team === 'Y');
+        if (!cur && isTeam && !canWriteTeam(u)) fail('팀 업무는 PI·PEO·PM만 쓸 수 있어요.');
         // 팀 업무는 주간만 (그 주 월요일로 저장)
         var kind = linkKey ? '일간' : isTeam ? '주간' : REPORT_KINDS.indexOf(str(p.kind)) >= 0 ? str(p.kind) : (cur ? cur.kind : '일간');
         var date = (src && cleanDate(src.date)) || cleanDate(p.date) || (cur ? cur.date : env.today());
@@ -2470,7 +2464,7 @@ var Logic_ = (function () {
           updatedAt: env.now()
         };
         if (cur) {
-          // 팀 업무·주간 업무를 고치면 무엇을 바꿨는지 기록 (바뀐 게 없으면 남기지 않음)
+          // 팀 업무를 고치면 무엇을 바꿨는지 기록 (바뀐 게 없으면 남기지 않음)
           var changes = sharedReport(cur) || sharedReport(obj) ? teamChanges(cur, obj) : '';
           store.update('reports', cur.id, obj);
           if (changes) addTeamLog(u, cur.id, changes, obj);
@@ -2557,11 +2551,7 @@ var Logic_ = (function () {
             content: content, note: note, status: status, progress: String(prog), doneDate: status === '완료' ? today : '',
             createdAt: now, updatedAt: now });
         });
-        if (add.length) {
-          store.append('reports', add);
-          // 주간 업무는 팀 업무 화면에도 보이므로 등록 기록을 남김
-          if (kind === '주간') store.append('reportLogs', add.map(function (x) { return { id: env.uuid(), reportId: x.id, changes: '등록', status: x.status, progress: x.progress, memo: '', author: u.name, createdAt: now }; }));
-        }
+        if (add.length) store.append('reports', add);
         return { state: loadFor(u), info: { added: add.length, skipped: skipped } };
       });
     }
@@ -2588,11 +2578,7 @@ var Logic_ = (function () {
             content: cur.content, note: cur.note, status: cur.status === '완료' ? '진행중' : cur.status, progress: cur.status === '완료' ? '0' : str(cur.progress),
             doneDate: '', carryFrom: id, createdAt: now, updatedAt: now });
         });
-        if (add.length) {
-          store.append('reports', add);
-          // 팀 업무 화면의 기록: 등록 (지난 주에서 이어받음)
-          store.append('reportLogs', add.map(function (x) { return { id: env.uuid(), reportId: x.id, changes: '등록', status: x.status, progress: x.progress, memo: '지난 주에서 이어받음', author: u.name, createdAt: now }; }));
-        }
+        if (add.length) store.append('reports', add);
         return { state: loadFor(u), info: { added: add.length, skipped: skipped } };
       });
     }
@@ -2612,7 +2598,7 @@ var Logic_ = (function () {
             ? { id: id, status: '완료', progress: '100', doneDate: cur.doneDate || today, updatedAt: now }
             : { id: id, status: '보류', updatedAt: now };
           ups.push(up);
-          // 주간 업무는 팀 업무 화면의 기록에도 남김
+          // 팀 업무면 진행 기록에도 남김
           var chg = sharedReport(cur) ? teamChanges(cur, { status: up.status, progress: up.progress || cur.progress }) : '';
           if (chg) logs.push({ id: env.uuid(), reportId: id, changes: chg, status: up.status, progress: str(up.progress || cur.progress), memo: '', author: u.name, createdAt: now });
         });
@@ -2864,7 +2850,6 @@ var Logic_ = (function () {
         case 'addReportStep': return addReportStep(u, p);
         case 'updateReportLog': return updateReportLog(u, p);
         case 'deleteReportLog': return deleteReportLog(u, p);
-        case 'setTeamHidden': return setTeamHidden(u, p);
         case 'saveReportsBatch': return saveReportsBatch(u, p);
         case 'saveSetting': return saveSetting(u, p);
         case 'carryReports': return carryReports(u, p);
@@ -3215,18 +3200,18 @@ var Logic_ = (function () {
         memory.caseNotes = [{ id: env.uuid(), project: 'mFCDB', receiptNo: sample.receiptNo, date: ago(4),
           content: '식약처 담당자와 통화: 템플릿 삭제 시 확인창 문구도 함께 수정 요청 → 다음 배포에 포함하기로 함', author: '위세희', updatedAt: env.now() }];
       }
-      // 업무보고 > 팀 업무 샘플 (PEO 모두에게 공유): 이번 주 주간 + 오늘 일간
+      // 업무보고 > 팀 업무 샘플 (PI·PEO·PM이 쓰고 PEO 모두가 봄): 이번 주
       var wk = L.mondayOf(today), fri = (function () { var t = new Date(wk + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + 4); return t.toISOString().slice(0, 10); })();
       memory.reports = (memory.reports || []).concat([
         ['주간', wk, 'HBM', fri, '3차년도 중간보고서 취합 및 제출', '세부별 원고 금요일까지', '진행중', 40, '사업PM'],
         ['주간', wk, 'KIND', fri, '자문위원회 일정 조율', '', '대기', 0, '사업PM'],
-        ['주간', wk, 'mFCDB', fri, '9월 DB 반영분 검수 일정 공유', 'PMO와 협의', '진행중', 60, '이주영'],
+        ['주간', wk, 'mFCDB', fri, '9월 DB 반영분 검수 일정 공유', 'PMO와 협의', '진행중', 60, '사업PM'],
         ['주간', wk, 'HBM', fri, '주간회의 자료 취합', '', '완료', 100, '사업PM']
       ].map(function (r) {
         return { id: env.uuid(), author: r[8], kind: r[0], date: r[1], project: r[2], deadline: r[3], content: r[4], note: r[5],
           status: r[6], progress: String(r[7]), doneDate: r[6] === '완료' ? today : '', createdAt: env.now(), updatedAt: env.now(), team: 'Y' };
       }));
-      // 내 업무의 주간 업무 샘플 (팀 업무 화면에도 연동되어 보임)
+      // 내 업무의 주간 업무 샘플 (본인과 PI·PEO·PM의 전체 현황 > 주간에 보임. 팀 업무와는 따로)
       memory.reports = memory.reports.concat([
         ['이주영', 'HBM', '3차년도 중간보고서 2세부 원고 작성', '진행중', 50],
         ['위세희', 'mFCDB', '영양성분 업로드 양식 테스트 시나리오 정리', '진행중', 30]
@@ -3234,13 +3219,13 @@ var Logic_ = (function () {
         return { id: env.uuid(), author: r[0], kind: '주간', date: wk, project: r[1], deadline: fri, content: r[2], note: '',
           status: r[3], progress: String(r[4]), doneDate: '', createdAt: env.now(), updatedAt: env.now() };
       }));
-      // 팀 업무 수정 기록 샘플: 등록 + 다른 사람이 고친 기록
+      // 팀 업무 진행 기록 샘플: 등록 + PI가 고친 기록
       memory.reportLogs = [];
-      memory.reports.filter(function (r) { return r.team === 'Y' || r.kind === '주간'; }).forEach(function (r) {
+      memory.reports.filter(function (r) { return r.team === 'Y'; }).forEach(function (r) {
         var first = r.content.indexOf('검수 일정') >= 0 ? { s: '진행중', p: '40' } : { s: r.status, p: r.progress };
         memory.reportLogs.push({ id: env.uuid(), reportId: r.id, changes: '등록', status: first.s, progress: first.p, author: r.author, createdAt: ago(1) + ' 09:30:00' });
         if (r.content.indexOf('검수 일정') >= 0) {
-          memory.reportLogs.push({ id: env.uuid(), reportId: r.id, changes: '진행도: 40% → 60% · 비고: 없음 → PMO와 협의', status: '진행중', progress: '60', author: '위세희', createdAt: today + ' 10:15:00' });
+          memory.reportLogs.push({ id: env.uuid(), reportId: r.id, changes: '진행도: 40% → 60% · 비고: 없음 → PMO와 협의', status: '진행중', progress: '60', author: '켐아이넷', createdAt: today + ' 10:15:00' });
         }
       });
       // 메일 송부 현황 샘플 (식품AX팀 PEO → PMO). 진행 기록: [며칠 전, 작성자, 진행상황, 내용]
@@ -7032,8 +7017,8 @@ var Logic_ = (function () {
    * 업무보고 (PEO·PI): 일간·주간 업무 기록
    *  - 내 업무: 왼쪽 업무 기록 → 가운데 내 진행현황 → 오른쪽 일일 업무보고(이행내용 복사)
    *  - 연동: 그날 내가 쓴 유지보수 기록·사업 진행 기록(작업)이 자동으로 함께 보임 (고치는 건 원래 화면에서)
-   *  - 팀 업무(PEO 모두, 주간만): 모든 사람의 주간 업무가 모이는 현황판. 남의 줄은 + 다음 단계만. PI·PEO·PM에게는 주간 작성 현황
-   *  - 일간 현황(PI·PEO·PM, 일간만, 예전 이름 ‘전체 현황’): 연구원별 일일 업무보고 + 사업별 + 진행현황표
+   *  - 팀 업무(주간): PI·PEO·PM이 쓰고 PEO 모두가 공지처럼 봄 (연구자는 보기만). 내 업무의 주간 업무와는 따로
+   *  - 전체 현황(PI·PEO·PM): 연구원별 일간·주간 업무보고 + 사업별 + 진행현황표
    * 빌드할 때 app.html 화면 코드 안(BIZ_UI 자리)에 그대로 들어갑니다.
    * ========================================================================== */
   var RP_ST_CLS = { '대기': 'wait', '진행중': 'run', '완료': 'done', '보류': 'hold', '문제발생': 'bad' };
@@ -7071,19 +7056,10 @@ var Logic_ = (function () {
       return !r.linkKey && r.team !== 'Y' && (!name || r.author === name) && r.kind === kind && r.date === (kind === '주간' ? w : d);
     });
   }
-  // 팀 업무 화면에 보이는 것: 그 주의 팀 업무 + 모든 사람이 내 업무에서 쓴 그 주 주간 업무 (PEO 모두에게 공유)
-  // 예전에 일간으로 쓴 팀 업무가 있어도 그 날이 든 주에 보임
-  function rpShared(r) { return r.team === 'Y' || (r.kind === '주간' && !r.linkKey); }
-  // 내 업무에서 쓴 주간 업무(팀 업무 화면에 연동되는 것)
-  function rpLinkedWeekly(r) { return r.team !== 'Y' && r.kind === '주간' && !r.linkKey; }
-  // hidden: 팀 업무 화면에서만 뺀 주간 업무를 볼 때 true
-  function rpTeam(d, hidden) {
+  // 팀 업무 화면에 보이는 것: 그 주의 팀 업무 (PI·PEO·PM이 씀). 예전에 일간으로 쓴 팀 업무가 있어도 그 날이 든 주에 보임
+  function rpTeam(d) {
     var w = L.mondayOf(d);
-    return (S.data.reports || []).filter(function (r) {
-      if (!rpShared(r) || L.mondayOf(r.date) !== w) return false;
-      var off = rpLinkedWeekly(r) && r.teamHidden === 'Y';
-      return hidden ? off : !off;
-    });
+    return (S.data.reports || []).filter(function (r) { return r.team === 'Y' && L.mondayOf(r.date) === w; });
   }
   function planToRp(st) { return st === '예정' ? '대기' : (L.REPORT_STATUSES.indexOf(st) >= 0 ? st : '진행중'); }
   // 연동: 작성일이 그날인 기록만 (유지보수 기록의 작성일, 사업 진행 기록의 날짜)
@@ -7203,7 +7179,7 @@ var Logic_ = (function () {
           }).join('');
         }).join('') + '</div>';
     }).join('');
-    return (cards || '<div class="empty"><strong>이 날짜에 기록한 업무가 없어요</strong></div>') +
+    return (cards || '<div class="empty"><strong>' + (kind === '주간' ? '이 주에' : '이 날짜에') + ' 기록한 업무가 없어요</strong></div>') +
       (idle.length ? '<div class="rp-board-card rp-idle"><div class="rp-rep-h">진행사항 없는 사업</div><div class="rp-line">* ' + esc(idle.join(', ')) + '</div></div>' : '');
   }
   function rpCopyByProject(members, d, kind) {
@@ -7314,10 +7290,10 @@ var Logic_ = (function () {
     var late = t.status !== '완료' && t.deadline < today();
     return '<span class="' + (late ? 'rp-late' : '') + '">' + esc(rpMD(t.deadline)) + '</span>';
   }
-  // 고칠 수 있는 사람: 쓴 사람, PI·PEO·PM (연동 항목도 업무보고에서만 고칠 수 있음). 팀 업무는 쓴 사람만
-  // 지울 수 있는 사람: 쓴 사람, PI·PEO·PM (팀 업무도 같음)
+  // 고칠 수 있는 사람: 쓴 사람, PI·PEO·PM (연동 항목도 업무보고에서만 고칠 수 있음). 팀 업무는 PI·PEO·PM만 (연구자는 보기만)
+  // 지울 수 있는 사람: 쓴 사람, PI·PEO·PM
   function rpCanDelete(r) { return r.author === S.user.name || canBoard(); }
-  function rpCanEdit(r) { return r.team === 'Y' ? r.author === S.user.name : rpCanDelete(r); }
+  function rpCanEdit(r) { return r.team === 'Y' ? canBoard() : rpCanDelete(r); }
   function rpEditAttr(t) {
     return t.linked ? ' data-act="rp-edit-link" data-key="' + esc(t.linkKey) + '"' : ' data-act="rp-edit" data-id="' + esc(t.id) + '"';
   }
@@ -7332,10 +7308,10 @@ var Logic_ = (function () {
       .sort(function (a, b) { return a.createdAt !== b.createdAt ? (a.createdAt < b.createdAt ? 1 : -1) : 0; });
   }
   function rpWhen(s) { s = String(s || ''); return s ? fmtDate(s.slice(0, 10)) + ' ' + s.slice(11, 16) : ''; }
-  // withActs: 내가 남긴 기록에 ‘수정·삭제’ 단추 (등록 기록은 빼고. PI·PEO·PM은 남의 기록도 삭제만)
+  // withActs: PI·PEO·PM에게 ‘수정(내가 남긴 기록만)·삭제’ 단추 (등록 기록은 빼고). 연구자는 보기만
   function rpLogText(l, withActs) {
-    var mine = l.author === S.user.name, canDel = mine || canBoard();
-    var acts = withActs && l.changes !== '등록' && (mine || canDel)
+    var w = canBoard(), mine = w && l.author === S.user.name;
+    var acts = withActs && w && l.changes !== '등록'
       ? '<span class="rp-log-acts">' + (mine ? '<button type="button" class="link" data-act="rp-log-edit" data-id="' + esc(l.id) + '">수정</button>' : '') +
         '<button type="button" class="link danger" data-act="rp-log-del" data-id="' + esc(l.id) + '">삭제</button></span>' : '';
     return '<span class="ml-log-when">' + esc(rpWhen(l.createdAt)) + '</span><b class="ml-log-who">' + esc(l.author) + '</b>' +
@@ -7346,7 +7322,7 @@ var Logic_ = (function () {
   // 수정 창 아래 수정 기록 (기록이 있을 때만. 최신이 맨 위, 이전은 ‘이전 n’ 뒤에)
   function rpHistoryBlock(logs) {
     if (!logs.length) return '';
-    return '<div class="fld ml-hist"><span class="lbl">진행 기록 <span class="hint">누가 어떻게 바꿨는지 · 최신이 맨 위 · 내가 남긴 기록은 수정·삭제</span></span>' +
+    return '<div class="fld ml-hist"><span class="lbl">진행 기록 <span class="hint">누가 어떻게 바꿨는지 · 최신이 맨 위</span></span>' +
       '<div class="ml-hist-front">' + rpLogText(logs[0], true) + '</div>' +
       (logs.length > 1 ? '<button type="button" class="stack-btn" id="rp-hist-more" aria-expanded="false">이전 ' + (logs.length - 1) + '</button>' +
         '<div class="ml-hist-back" id="rp-hist-back" hidden>' + logs.slice(1).map(function (l) { return '<div class="ml-hist-item"><span class="stack-mark" aria-hidden="true">↳</span>' + rpLogText(l, true) + '</div>'; }).join('') + '</div>' : '') +
@@ -7366,7 +7342,7 @@ var Logic_ = (function () {
   }
   // authorLabel: 사람 칸 이름 (기본 ‘담당자’, 팀 업무는 ‘작성자’)
   // 팀 업무 줄에는 진행상태 옆 ‘기록 n’ 단추, 그 아래에 수정 기록이 스택으로 쌓임 (최신이 맨 위)
-  // withStep: 맨 오른쪽 관리 칸에 ‘+ 다음 단계’ (팀 업무 표)
+  // withStep: 맨 오른쪽 관리 칸에 ‘+ 다음 단계’ (팀 업무 표, PI·PEO·PM에게만)
   // 사업별로 묶을 때(기본)는 사업 칸 없이 사업 이름 줄 아래에 그 사업 업무를 모아 보여 줌 (사업 이름이 줄마다 반복되지 않게)
   function rpTable(items, groupBy, showAuthor, authorLabel, emptyMsg, withStep) {
     if (!items.length) return '<div class="empty"><strong>' + (emptyMsg || '해당하는 업무가 없어요') + '</strong></div>';
@@ -7378,10 +7354,9 @@ var Logic_ = (function () {
       g.order.map(function (k) {
         return '<tr class="rp-grp"><td colspan="' + cols + '"><span class="rp-grp-name">' + esc(k) + '</span> <span class="count">' + g.by[k].length + '건</span></td></tr>' +
           g.by[k].slice().sort(rpByOrder).map(function (t) {
-            // 팀 업무 화면(withStep): 내가 쓴 줄은 눌러서 고치고, 남이 쓴 줄은 눌러도 + 다음 단계 창만 (고칠 수 없음)
-            var mine = t.author === S.user.name, edit = withStep ? mine : rpCanEdit(t);
-            var rowAct = edit ? ' class="clickable"' + rpEditAttr(t) + (withStep ? ' data-ctx="team"' : '') : (withStep && rpShared(t) ? ' class="clickable" data-act="rp-step" data-id="' + esc(t.id) + '"' : '');
-            var logs = withStep || t.team === 'Y' ? rpTeamLogs(t.id) : [], sOpen = !!(S.rpStack && S.rpStack[t.id]);
+            // 고칠 수 있는 줄만 눌러서 고침 (팀 업무는 PI·PEO·PM만, 연구자는 보기만)
+            var rowAct = rpCanEdit(t) ? ' class="clickable"' + rpEditAttr(t) : '';
+            var logs = t.team === 'Y' ? rpTeamLogs(t.id) : [], sOpen = !!(S.rpStack && S.rpStack[t.id]);
             var stack = logs.length ? '<button type="button" class="stack-btn' + (sOpen ? ' on' : '') + '" data-act="rp-stack" data-id="' + esc(t.id) + '" aria-expanded="' + sOpen + '" title="진행 기록 ' + logs.length + '건 ' + (sOpen ? '접기' : '보기') + '">기록 ' + logs.length + '</button>' : '';
             return '<tr' + rowAct + '>' +
               (projCol ? '<td><b>' + esc(t.project || '기타') + '</b></td>' : '') + (showAuthor ? '<td class="rp-who">' + esc(t.author) + '</td>' : '') +
@@ -7389,7 +7364,7 @@ var Logic_ = (function () {
               '<td class="date">' + rpDeadline(t) + '</td><td class="rp-st-cell">' + rpChip(t.status) + stack + '</td><td class="rp-prog-cell">' + rpProgCell(t) + '</td>' +
               '<td class="note">' + esc(t.note || '') + '</td>' +
               // 관리: + 다음 단계만 (삭제는 줄을 눌러 여는 창에서)
-              (withStep ? '<td class="sticky-act"><div class="actions">' + (rpShared(t) ? '<button class="btn sm ghost" data-act="rp-step" data-id="' + esc(t.id) + '">+ 다음 단계</button>' : '') +
+              (withStep ? '<td class="sticky-act"><div class="actions">' + (t.team === 'Y' ? '<button class="btn sm ghost" data-act="rp-step" data-id="' + esc(t.id) + '">+ 다음 단계</button>' : '') +
                 '</div></td>' : '') +
               '</tr>' +
               // 진행 기록 스택 (최신 → 이전). 내가 남긴 기록에는 수정·삭제
@@ -7439,11 +7414,14 @@ var Logic_ = (function () {
     return payload;
   }
   // 쓰는 중인 내용 기억 (자동 새로고침으로 화면을 다시 그려도 남게)
+  // 내 업무 기록칸(rp-form) → S.rp.draft, 팀 업무 추가 칸(rp-team-form) → S.rp.teamDraft
+  function rpDraftKey(form) { return form.id === 'rp-form' ? 'draft' : form.id === 'rp-team-form' ? 'teamDraft' : ''; }
   function rpSaveDraft(form) {
-    if (form.id !== 'rp-form') return;
+    var key = rpDraftKey(form);
+    if (!key) return;
     // dlSet: 마감일을 직접 고쳤는지 (안 고쳤으면 날짜를 바꿀 때 마감일도 그날 / 그 주 금요일로 따라감)
-    S.rp.draft = { project: form.project.value, deadline: form.deadline.value, content: form.content.value, note: form.note.value, status: rpCurStatus(form), progress: form.progress.value,
-      dlSet: !!(S.rp.draft && S.rp.draft.dlSet) };
+    S.rp[key] = { project: form.project.value, deadline: form.deadline.value, content: form.content.value, note: form.note.value, status: rpCurStatus(form), progress: form.progress.value,
+      dlSet: !!(S.rp[key] && S.rp[key].dlSet) };
   }
   function rpFormEvent(e) {
     var f = e.target.closest && e.target.closest('form.rp-form-box');
@@ -7452,7 +7430,7 @@ var Logic_ = (function () {
     if (e.type === 'input' && e.target.name === 'progRange') f.progress.value = e.target.value;
     if (e.type === 'input' && e.target.name === 'progress') f.progRange.value = e.target.value;
     rpSaveDraft(f);
-    if (e.target.name === 'deadline' && f.id === 'rp-form') S.rp.draft.dlSet = true;
+    if (e.target.name === 'deadline' && rpDraftKey(f)) S.rp[rpDraftKey(f)].dlSet = true;
   }
   document.addEventListener('change', rpFormEvent);
   document.addEventListener('input', rpFormEvent);
@@ -7460,67 +7438,46 @@ var Logic_ = (function () {
   /* ---------- 화면 ---------- */
   function viewReport() {
     var d = rpDay(), kind = S.rp.kind;
-    // 하위 탭: 내 업무 · 팀 업무(주간, PEO 모두) · 일간 현황(일간, PI·PEO·PM)
-    var tabs = [['mine', '내 업무'], ['team', '팀 업무']].concat(canBoard() ? [['board', '일간 현황']] : []);
+    // 하위 탭: 내 업무 · 팀 업무(주간, PEO 모두) · 전체 현황(일간·주간, PI·PEO·PM)
+    var tabs = [['mine', '내 업무'], ['team', '팀 업무']].concat(canBoard() ? [['board', '전체 현황']] : []);
     var view = tabs.some(function (t) { return t[0] === S.rp.view; }) ? S.rp.view : 'mine';
     var head = '<div class="view-head"><h1>업무보고</h1></div>';
     var nav = '<div class="subtabs" role="tablist">' + tabs.map(function (t) {
       return '<button role="tab" class="subtab' + (view === t[0] ? ' on' : '') + '" data-act="rp-view" data-tab="' + t[0] + '">' + t[1] + '</button>';
     }).join('') + '</div>';
-    // 팀 업무는 주간만, 일간 현황은 일간만: 일간/주간 버튼 없이 그 단위로 이동 (‹ › 가 한 주씩 / 하루씩)
-    // 일간/주간 버튼은 내 업무에만
-    var team = view === 'team', board = view === 'board', k = team ? '주간' : board ? '일간' : kind;
+    // 팀 업무는 주간만: 일간/주간 버튼 없이 한 주씩 이동. 내 업무·전체 현황은 일간/주간 버튼
+    var team = view === 'team', k = team ? '주간' : kind;
     var step = k === '주간' ? 7 : 1;
     var filters = '<div class="filters rp-filters">' +
-      (team || board ? '<span class="tag rp-week-tag">' + k + '</span>' : '<div class="seg-group" role="radiogroup" aria-label="일간·주간">' + L.REPORT_KINDS.map(function (x) {
+      (team ? '<span class="tag rp-week-tag">주간</span>' : '<div class="seg-group" role="radiogroup" aria-label="일간·주간">' + L.REPORT_KINDS.map(function (x) {
         return '<button type="button" class="seg-btn' + (kind === x ? ' on' : '') + '" data-act="rp-kind" data-kind="' + x + '">' + x + ' 업무</button>';
       }).join('') + '</div>') +
       '<span class="rp-datenav"><button type="button" class="btn sm" data-act="rp-day" data-step="-' + step + '" aria-label="이전">‹</button>' +
       '<input type="date" class="inp" data-filter="rp.date" value="' + esc(d) + '" aria-label="날짜">' +
       '<button type="button" class="btn sm" data-act="rp-day" data-step="' + step + '" aria-label="다음">›</button>' +
-      '<button type="button" class="btn sm" data-act="rp-day" data-step="0">' + (team ? '이번 주' : '오늘') + '</button></span>' +
+      '<button type="button" class="btn sm" data-act="rp-day" data-step="0">' + (k === '주간' ? '이번 주' : '오늘') + '</button></span>' +
       '<b class="rp-scope">' + esc(rpScopeLabel(k)) + '</b></div>';
-    return head + nav + filters + (board ? rpBoardView(d, '일간') : team ? rpTeamView(d) : rpMineView(d, kind));
+    return head + nav + filters + (view === 'board' ? rpBoardView(d, kind) : team ? rpTeamView(d) : rpMineView(d, kind));
   }
 
-  /* ---------- 팀 업무: PEO 모두에게 공유되는 주간 현황판 ----------
-   * 주간(그 주) 단위만. 내 업무 > 주간에서 쓴 업무가 모두 여기에 모임 (따로 추가하는 칸 없음).
-   * 예전에 팀 업무로 직접 추가한 것(team = 'Y')도 함께 보임. 진행현황표처럼 사업별 표 */
+  /* ---------- 팀 업무: PI·PEO·PM이 쓰고 PEO 모두가 공지처럼 보는 주간 업무 ----------
+   * 주간(그 주) 단위만. PI·PEO·PM: 왼쪽 추가 칸 + 표(눌러서 고치기, + 다음 단계)
+   * 연구자: 표만 (고치기·다음 단계 없이 보기만, 진행 기록은 ‘기록 n’으로 볼 수 있음)
+   * 내 업무 > 주간 업무와는 연동되지 않음 */
   function rpTeamView(d) {
-    var items = rpTeam(d);
-    // 팀 업무에서만 지운 주간 업무 (다시 넣을 수 있는 것만 셈: 쓴 사람, PI·PEO·PM)
-    var hiddenN = rpTeam(d, true).filter(rpCanDelete).length;
-    // PI·PEO·PM: 주간 업무 작성 현황 (예전 전체 현황 > 주간에 있던 것)
-    var pm = canBoard(), statusBar = '';
-    if (pm) {
-      var members = rpBoardMembers(d, '주간');
-      var wrote = members.filter(function (n) { return rpOwn(n, '주간', d).length > 0; });
-      var missing = members.filter(function (n) { return wrote.indexOf(n) < 0; });
-      statusBar = '<div class="rp-team-status"><span class="count" title="내 업무에서 이 주의 주간 업무를 쓴 사람 (PI·PEO·PM에게만 보여요)">주간 업무 작성 ' + wrote.length + ' / ' + members.length + '명</span>' +
-        (missing.length ? '<span class="rp-missing">작성 안 함: ' + esc(missing.join(', ')) + '</span>' : '<span class="hint">모두 작성했어요</span>') + '</div>';
-    }
-    var copyBtns = items.length ? '<button class="btn sm primary" data-act="rp-team-copy">⧉ 팀 업무 복사</button>' : '';
+    var items = rpTeam(d), pm = canBoard();
+    var copyBtn = items.length ? '<button class="btn sm primary" data-act="rp-team-copy">⧉ 팀 업무 복사</button>' : '';
     var listBox = '<section class="panel"><div class="panel-head"><h2>팀 업무 진행현황</h2><span class="count">' + items.length + '건</span>' +
-      '<span class="spacer"></span>' +
-      (hiddenN ? '<button class="btn sm" data-act="rp-team-hidden-list" title="팀 업무에서만 지운 주간 업무 (내 업무에는 그대로, 다시 넣을 수 있어요)">팀 업무에서 지운 주간 업무 ' + hiddenN + '건</button>' : '') +
-      copyBtns + '</div>' + statusBar + // 작성 현황은 PI·PEO·PM에게만 (연구자에게는 안 보임)
-      rpTable(items, 'project', true, '작성자', '이 주에 기록한 주간 업무가 없어요. 내 업무 > 주간 업무에서 쓰면 여기에 보여요', true) + '</section>';
-    return listBox;
-  }
-  // 팀 업무에서만 지운 주간 업무 목록 → 다시 넣기
-  function openTeamHiddenModal() {
-    var list = rpTeam(rpDay(), true).filter(rpCanDelete);
-    if (!list.length) { closeModal(); return; }
-    openModal({
-      title: '팀 업무에서 지운 주간 업무 · ' + rpScopeLabel('주간'), size: 'wide',
-      body: '<div class="callout">팀 업무 화면에서만 뺀 주간 업무예요. 쓴 사람의 내 업무에는 그대로 있어요.</div>' +
-        '<div class="rp-hidden-list">' + list.map(function (t) {
-          return '<div class="rp-hidden-row"><b>' + esc(t.project || '기타') + '</b><span class="rp-link">주간 업무</span><span class="hint">' + esc(t.author) + '</span>' +
-            '<span class="rp-hidden-txt">' + esc(t.content) + '</span>' +
-            '<button class="btn sm" data-act="rp-team-unhide" data-id="' + esc(t.id) + '">다시 넣기</button></div>';
-        }).join('') + '</div>',
-      footer: '<button class="btn" data-act="modal-close">닫기</button>'
-    });
+      '<span class="spacer"></span>' + copyBtn + '</div>' +
+      rpTable(items, 'project', true, '작성자', pm ? '이 주에 올린 팀 업무가 없어요. 왼쪽에서 추가하세요.' : '이 주에 올라온 팀 업무가 없어요', pm) + '</section>';
+    if (!pm) return listBox;
+    // 추가 칸: 마감일 기본값은 그 주 금요일 (직접 고치면 고친 값 유지)
+    var dr = S.rp.teamDraft || null, dl = dr && dr.dlSet ? dr.deadline : rpWeekEnd(d);
+    var formBox = '<section class="panel"><div class="panel-head"><h2>팀 업무 추가</h2><span class="h-sub">' + esc(rpScopeLabel('주간')) + '</span></div>' +
+      '<form class="form rp-form-box rp-pad" id="rp-team-form" autocomplete="off" novalidate>' +
+      rpFields(dr ? { project: dr.project, deadline: dl, content: dr.content, note: dr.note, status: dr.status, progress: dr.progress } : null, dl) +
+      '<button type="button" class="btn primary" data-act="rp-team-add">＋ 팀 업무 추가</button></form></section>';
+    return '<div class="rp-team-grid">' + formBox + listBox + '</div>';
   }
   // 팀 업무 복사: [사업] 아래 - 내용 (모든 계정 같음)
   function rpTeamCopyText(d) {
@@ -7610,7 +7567,7 @@ var Logic_ = (function () {
       '<div class="rp-card-b">' + esc(t.content) + (t.note ? '<div class="rp-nt">' + esc(t.note) + '</div>' : '') + '</div>' +
       '<div class="rp-card-f">' + rpProgCell(t) + '</div></div>';
   }
-  // 일간 현황(예전 ‘전체 현황’, 일간만): 사람별(연구원마다 업무보고) / 사업별(사업 → 사람 → 업무) / 진행현황표
+  // 전체 현황(일간·주간): 사람별(연구원마다 업무보고) / 사업별(사업 → 사람 → 업무) / 진행현황표
   function rpBoardMembers(d, kind) { return rpMembers(rpOwn(null, kind, d).map(function (r) { return r.author; })); }
   function rpBoardView(d, kind) {
     var members = rpBoardMembers(d, kind);
@@ -7634,11 +7591,10 @@ var Logic_ = (function () {
   }
 
   /* ---------- 수정 창 ---------- */
-  // ctx: 'team' = 팀 업무 화면에서 연 경우 (연동된 주간 업무의 삭제는 팀 업무에서만 빼기)
-  function openReportModal(id, ctx) {
+  function openReportModal(id) {
     var r = (S.data.reports || []).filter(function (x) { return x.id === id; })[0];
-    if (!r) return;
-    var team = r.team === 'Y', hideOnly = ctx === 'team' && rpLinkedWeekly(r);
+    if (!r || !rpCanEdit(r)) return;
+    var team = r.team === 'Y';
     var m = openModal({
       title: (team ? '팀 업무 수정 · 작성 ' : '업무 수정 · ') + r.author, size: 'wide',
       body: '<form class="form rp-form-box" id="rp-edit-form" autocomplete="off" novalidate>' +
@@ -7648,12 +7604,10 @@ var Logic_ = (function () {
             '<div class="fld"><span class="lbl">구분</span><div class="ml-status-now"><span class="tag rp-week-tag">주간</span></div><input type="hidden" name="kind" value="주간"></div></div>'
           : '<div class="form-grid"><label class="fld"><span class="lbl">구분</span><select class="inp" name="kind">' + options(L.REPORT_KINDS, r.kind) + '</select></label>' +
             '<label class="fld"><span class="lbl">날짜 <span class="hint">주간은 그 주 월요일로 저장</span></span><input type="date" class="inp" name="date" value="' + esc(r.date) + '"></label></div>') +
-        rpFields(r) + (rpShared(r) ? rpHistoryBlock(rpTeamLogs(r.id)) : '') + '</form>',
-      // 삭제: 쓴 사람과 PI·PEO·PM만 (팀 업무는 누구나 고치지만 지우는 건 이 사람들만)
-      footer: (rpCanDelete(r) ? '<span class="left">' + (hideOnly
-          ? '<button class="btn danger-line" data-act="rp-team-hide" data-id="' + esc(r.id) + '" title="팀 업무에서만 지워요. 내 업무에는 그대로 남아요">팀 업무에서 삭제</button>'
-          : '<button class="btn danger-line" data-act="rp-del" data-id="' + esc(r.id) + '">삭제</button>') + '</span>' : '') +
-        (rpShared(r) ? '<button class="btn" data-act="rp-step" data-id="' + esc(r.id) + '">+ 다음 단계</button>' : '') +
+        rpFields(r) + (team ? rpHistoryBlock(rpTeamLogs(r.id)) : '') + '</form>',
+      // 삭제: 쓴 사람과 PI·PEO·PM만
+      footer: (rpCanDelete(r) ? '<span class="left"><button class="btn danger-line" data-act="rp-del" data-id="' + esc(r.id) + '">삭제</button></span>' : '') +
+        (team ? '<button class="btn" data-act="rp-step" data-id="' + esc(r.id) + '">+ 다음 단계</button>' : '') +
         '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="rp-save">저장</button>'
     });
     var form = $('#rp-edit-form', m);
@@ -7671,22 +7625,22 @@ var Logic_ = (function () {
       payload.id = r.id; payload.kind = form.kind.value; payload.date = form.date.value || r.date;
       saving = true;
       call('saveReport', payload).then(function (res) {
-        if (rpShared(r)) { S.rpStack = S.rpStack || {}; S.rpStack[r.id] = true; } // 고친 기록이 스택 맨 위에 보이게 펼쳐 둠
+        if (team) { S.rpStack = S.rpStack || {}; S.rpStack[r.id] = true; } // 고친 기록이 스택 맨 위에 보이게 펼쳐 둠
         closeModal(); applyState(res); toast(team ? '팀 업무를 고쳤어요. 진행 기록에 남았어요.' : '업무를 고쳤어요.');
       }, function () { saving = false; });
     });
   }
 
-  /* 팀 업무 + 다음 단계: 진행상태·진행도를 바꾸고 진행 내용(선택)을 남김 → 수정 기록이 맨 위에 쌓임 (PEO 누구나) */
+  /* 팀 업무 + 다음 단계: 진행상태·진행도를 바꾸고 진행 내용(선택)을 남김 → 수정 기록이 맨 위에 쌓임 (PI·PEO·PM) */
   function openReportStep(id) {
     var r = (S.data.reports || []).filter(function (x) { return x.id === id; })[0];
-    if (!r || !rpShared(r)) return; // 팀 업무와 주간 업무
+    if (!r || r.team !== 'Y' || !canBoard()) return;
     var st = r.status, prog = +r.progress || 0, lock = st === '대기' || st === '완료', dis = lock ? ' disabled' : '';
     var m = openModal({
       title: '다음 단계 · ' + (r.project ? '[' + r.project + '] ' : '') + r.content, size: 'wide',
       body: '<form class="form rp-form-box" id="rp-step-form" autocomplete="off" novalidate>' +
         '<p class="ml-step-now">지금 ' + rpChip(st) + ' <span class="rp-pct">' + prog + '%</span>' +
-        '<span class="hint">작성 ' + esc(r.author) + (r.team === 'Y' ? ' · 팀 업무' : ' · 주간 업무') + (r.author !== S.user.name ? ' · 내용은 쓴 사람만 고칠 수 있어요' : '') + '</span></p>' +
+        '<span class="hint">작성 ' + esc(r.author) + ' · 팀 업무</span></p>' +
         '<div class="fld"><span class="lbl">진행상태 <em>*</em></span><div class="seg-group rp-st" role="radiogroup" aria-label="진행상태">' + L.REPORT_STATUSES.map(function (s) {
           return '<label class="seg-opt"><input type="radio" name="status" value="' + s + '"' + (s === st ? ' checked' : '') + '><span>' + s + '</span></label>';
         }).join('') + '</div></div>' +
@@ -7696,10 +7650,7 @@ var Logic_ = (function () {
         '<span class="rp-quick">' + [0, 25, 50, 75, 100].map(function (n) { return '<button type="button" class="btn sm" data-rp-prog="' + n + '"' + dis + '>' + n + '</button>'; }).join('') + '</span></div></div>' +
         '<label class="fld"><span class="lbl">진행 내용 <span class="hint">선택</span></span><textarea class="inp" name="memo" rows="3" maxlength="1000" placeholder="예: 세부별 원고 3건 취합 완료, 1건 대기" autofocus></textarea></label>' +
         rpHistoryBlock(rpTeamLogs(r.id)) + '</form>',
-      // 삭제 (쓴 사람·PI·PEO·PM): 주간 업무는 팀 업무에서만 빼고, 예전에 팀 업무로 추가한 것은 지움
-      footer: (rpCanDelete(r) ? '<span class="left">' + (rpLinkedWeekly(r)
-          ? '<button class="btn danger-line" data-act="rp-team-hide" data-id="' + esc(r.id) + '" title="팀 업무에서만 지워요. 쓴 사람의 내 업무에는 그대로 남아요">팀 업무에서 삭제</button>'
-          : '<button class="btn danger-line" data-act="rp-del" data-id="' + esc(r.id) + '">삭제</button>') + '</span>' : '') +
+      footer: (rpCanDelete(r) ? '<span class="left"><button class="btn danger-line" data-act="rp-del" data-id="' + esc(r.id) + '">삭제</button></span>' : '') +
         '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="rp-step-save">기록</button>'
     });
     var form = $('#rp-step-form', m);
@@ -7722,11 +7673,11 @@ var Logic_ = (function () {
     });
   }
 
-  /* 내가 남긴 진행 기록 고치기 (진행상태·진행도·진행 내용) · 삭제
+  /* 내가 남긴 진행 기록 고치기 (진행상태·진행도·진행 내용) · 삭제 (PI·PEO·PM)
    * 가장 최근 기록이면 업무의 진행상태·진행도도 함께 바뀜 */
   function openLogEdit(id) {
     var l = (S.data.reportLogs || []).filter(function (x) { return x.id === id; })[0];
-    if (!l || l.author !== S.user.name) return;
+    if (!l || l.author !== S.user.name || !canBoard()) return;
     var r = (S.data.reports || []).filter(function (x) { return x.id === l.reportId; })[0];
     var latest = rpTeamLogs(l.reportId)[0] === l;
     var st = L.REPORT_STATUSES.indexOf(l.status) >= 0 ? l.status : (r ? r.status : '진행중');
@@ -7920,21 +7871,24 @@ var Logic_ = (function () {
     'rp-stack': function (el) { rpToggleStack(el.getAttribute('data-id')); },
     'rp-step': function (el) { openReportStep(el.getAttribute('data-id')); },
     'rp-log-edit': function (el) { openLogEdit(el.getAttribute('data-id')); },
-    // 연동된 주간 업무를 팀 업무에서만 빼기·다시 넣기 (내 업무에는 그대로)
-    'rp-team-hide': function (el) {
-      var id = el.getAttribute('data-id');
-      var t = (S.data.reports || []).filter(function (x) { return x.id === id; })[0];
-      confirmBox('<b>' + esc(t ? t.content : '') + '</b><br>이 주간 업무를 <b>팀 업무에서만</b> 지울까요?<br><span class="hint">' + esc(t ? t.author : '') + '님의 내 업무에는 그대로 남아요. ‘팀 업무에서 지운 주간 업무’에서 다시 넣을 수 있어요.</span>', '팀 업무에서 삭제', true).then(function (ok) {
-        if (ok) call('setTeamHidden', { id: id, hidden: true }).then(function (res) { closeModal(); applyState(res); toast('팀 업무에서 지웠어요. 내 업무에는 그대로예요.'); }, noop);
-      });
+    // 팀 업무 추가 (PI·PEO·PM): 그 주(월요일)로 저장, PEO 모두에게 보임
+    'rp-team-add': function () {
+      var form = $('#rp-team-form');
+      if (!form) return;
+      var payload = rpPayload(form);
+      if (!payload) return;
+      payload.team = true; payload.kind = '주간'; payload.date = rpDay();
+      S.rp.lastProject = payload.project;
+      call('saveReport', payload).then(function (res) {
+        S.rp.teamDraft = null;
+        applyState(res);
+        toast('팀 업무를 올렸어요. PEO 모두에게 보여요.');
+        var f2 = $('#rp-team-form'); if (f2) f2.content.focus();
+      }, noop);
     },
-    'rp-team-unhide': function (el) {
-      call('setTeamHidden', { id: el.getAttribute('data-id'), hidden: false }).then(function (res) { applyState(res); openTeamHiddenModal(); toast('팀 업무에 다시 넣었어요.'); }, noop);
-    },
-    'rp-team-hidden-list': function () { openTeamHiddenModal(); },
     'rp-log-del': function (el) { deleteLog(el.getAttribute('data-id')); },
     'rp-team-copy': function () { copyText(rpTeamCopyText(rpDay()), '팀 업무를 복사했어요. 메신저나 메일에 붙여 넣으세요.'); },
-    'rp-edit': function (el) { openReportModal(el.getAttribute('data-id'), el.getAttribute('data-ctx')); },
+    'rp-edit': function (el) { openReportModal(el.getAttribute('data-id')); },
     'rp-del': function (el) {
       var id = el.getAttribute('data-id');
       confirmBox('이 업무를 삭제할까요? 되돌릴 수 없어요.', '삭제', true).then(function (ok) {
@@ -7942,8 +7896,8 @@ var Logic_ = (function () {
       });
     },
     'rp-copy': function (el) {
-      // 일간 현황(사람별·사업별)은 일간만. 팀 업무의 사람별·사업별 복사는 rp-team-copy
-      var d = rpDay(), kind = '일간', who = el.getAttribute('data-who');
+      // 전체 현황(사람별·사업별)은 고른 일간/주간 그대로. 팀 업무 복사는 rp-team-copy
+      var d = rpDay(), kind = S.rp.kind, who = el.getAttribute('data-who');
       if (who === 'all') copyText(rpCopyText(rpBoardMembers(d, kind), d, true, kind));
       else if (who === 'project') copyText(rpCopyByProject(rpBoardMembers(d, kind), d, kind));
       else copyText(rpCopyText([S.user.name], d, false));
