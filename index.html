@@ -386,7 +386,7 @@ select.inp { padding-right: 28px; }
 .ml-tbl td.ml-type { white-space: nowrap; }
 .ml-tbl tr.ml-urgent td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 .ml-clip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
-.ml-norm { color: var(--muted); font-size: 13px; }
+.st.ml-urg { min-width: 44px; justify-content: center; }
 .tag.ml-dd { margin-right: 3px; }
 .ml-urg-n { color: var(--danger); }
 .ml-file { cursor: pointer; display: inline-flex; align-items: center; }
@@ -7693,7 +7693,8 @@ var Logic_ = (function () {
     return 'st-wait';
   }
   function mlChip(s) { return s ? '<span class="st ' + mlStCls(s) + '">' + esc(s) + '</span>' : '<span class="hint">-</span>'; }
-  function mlUrg(x) { return x.urgency === '긴급' ? '<span class="st st-bad">긴급</span>' : '<span class="ml-norm">일반</span>'; }
+  // 구분: 일반·긴급 모두 같은 크기의 칩 (일반 = 회색, 긴급 = 빨강)
+  function mlUrg(x) { return x.urgency === '긴급' ? '<span class="st st-bad ml-urg">긴급</span>' : '<span class="st st-wait ml-urg">일반</span>'; }
   function mlDbDev(x) {
     var list = L.splitNames(x.dbDev);
     return list.length ? list.map(function (d) { return '<span class="tag ml-dd">' + esc(d) + '</span>'; }).join('') : '<span class="hint">-</span>';
