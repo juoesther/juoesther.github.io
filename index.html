@@ -950,7 +950,7 @@ var Logic_ = (function () {
   /* ---------- 과제(사업) ---------- */
   // 서버 코드 지문: build.ps1이 서버 쪽 코드(logic·supa-core·서버 입구)로 만든 값을 넣음. 화면 파일과 서버에 같은 값이 들어감
   // 서버가 돌려준 값이 화면과 다르면(서버를 다시 Deploy하지 않음) 화면이 PI·PM에게 알려 줌
-  var SERVER_BUILD = 'eb93b06acb7f';
+  var SERVER_BUILD = '933c4858e6c2';
   var KINDS = ['연구', '유지보수']; // 화면에서는 '연구' → ‘연구사업’으로 보여 줌
   var RESEARCH_TYPES = ['연구용역', '일반용역', '출연과제', '정책연구']; // 연구사업 종류
   function kindOf(p) { return p && p.kind === '연구' ? '연구' : '유지보수'; }
@@ -2895,6 +2895,56 @@ var Logic_ = (function () {
         return { state: loadFor(u) };
       });
     }
+    // 같은 이력인지: 사업·요청일·세부 내용 (앞뒤·겹친 공백 무시)
+    function mhKey(x) { return [str(x.project), str(x.requestDate), str(x.content).replace(/\s+/g, ' ').trim()].join('|'); }
+    // 엑셀(월간보고 이력 양식, 사업마다 시트)에서 가져오기 (PI만, 과제 관리에서). 하나라도 잘못되면 아무것도 저장하지 않음
+    // 이미 있는 이력(같은 사업·요청일·세부 내용)은 건너뜀. 엑셀의 칸은 길이만 맞춰 자르고, 구분·진행 상황은 알 수 없으면 일반·진행중
+    var MH_IMPORT_MAX = 3000;
+    function importMaintHistory(u, p) {
+      requirePI(u);
+      var items = Array.isArray(p.items) ? p.items : [];
+      if (!items.length) fail('가져올 줄이 없어요.');
+      if (items.length > MH_IMPORT_MAX) fail('한 번에 ' + MH_IMPORT_MAX + '줄까지 가져올 수 있어요.');
+      return store.withLock(function () {
+        var projects = store.list('projects'), have = {};
+        store.list('maintHistory').forEach(function (x) { have[mhKey(x)] = true; });
+        var add = [], skipped = 0, now = env.now();
+        items.forEach(function (x, i) {
+          x = x || {};
+          var where = (str(x.sheet) ? str(x.sheet) + ' ' : '') + (str(x.row) || (i + 1)) + '번째 줄: ';
+          var proj = findProject(projects, str(x.project));
+          if (!proj) fail(where + '사업(' + str(x.project) + ')을 찾을 수 없어요.');
+          if (kindOf(proj) !== '유지보수') fail(where + proj.name + '은(는) 유지보수 과제가 아니에요.');
+          var requestDate = cleanDate(x.requestDate);
+          if (!requestDate) fail(where + '요청일을 알 수 없어요.');
+          var content = cut(x.content, 1000);
+          if (!content) fail(where + '세부 내용이 비어 있어요.');
+          var obj = {
+            project: proj.name, category: MH_CATEGORIES.indexOf(str(x.category)) >= 0 ? str(x.category) : '일반',
+            requester: cut(x.requester, 50), requestDate: requestDate, content: content, result: cut(x.result, 2000),
+            status: STATUSES.indexOf(str(x.status)) >= 0 ? str(x.status) : '진행중', dueDate: cleanDate(x.dueDate),
+            researcher: cut(x.researcher, 100), developer: cut(x.developer, 100), designer: cut(x.designer, 100)
+          };
+          var key = mhKey(obj);
+          if (have[key]) { skipped++; return; }
+          have[key] = true;
+          obj.id = env.uuid(); obj.author = IMPORT_AUTHOR; obj.createdAt = now; obj.updatedAt = now; obj.updatedBy = u.name;
+          add.push(obj);
+        });
+        if (add.length) store.append('maintHistory', add);
+        return { state: loadFor(u), info: { added: add.length, skipped: skipped } };
+      });
+    }
+    // 엑셀에서 가져온 이력만 모두 지우기 (다시 가져오기 전 정리용, PI). 화면에서 직접 적은 이력은 남음
+    function clearImportedMaintHistory(u) {
+      requirePI(u);
+      return store.withLock(function () {
+        var ids = store.list('maintHistory').filter(function (x) { return x.author === IMPORT_AUTHOR; }).map(function (x) { return x.id; });
+        if (!ids.length) fail('가져온 이력이 없어요.');
+        store.removeMany('maintHistory', ids);
+        return { state: loadFor(u), info: { count: ids.length } };
+      });
+    }
 
     function handle(req) {
       req = req || {};
@@ -2964,6 +3014,8 @@ var Logic_ = (function () {
         case 'deleteCaseNote': return deleteCaseNote(u, p);
         case 'saveMaintHistory': return saveMaintHistory(u, p);
         case 'deleteMaintHistory': return deleteMaintHistory(u, p);
+        case 'importMaintHistory': return importMaintHistory(u, p);
+        case 'clearImportedMaintHistory': return clearImportedMaintHistory(u);
         case 'importBiz': return importBiz(u, p);
         case 'clearImportedBiz': return clearImportedBiz(u);
         case 'exportAll': return exportAll(u);
@@ -4755,7 +4807,7 @@ var Logic_ = (function () {
   function viewAdmin() {
     var tabs = [['projects', '연구사업'], ['users', '사용자']];
     // 엑셀 가져오기·백업은 PI만 (서버에서도 PI만 허용)
-    if (isPI()) tabs.push(['import', '유지보수 엑셀 가져오기'], ['bizimport', '과제 현황 가져오기'], ['mailimport', '메일송부현황 가져오기'], ['backup', '백업']);
+    if (isPI()) tabs.push(['import', '유지보수 엑셀 가져오기'], ['mhimport', '유지보수 이력 가져오기'], ['bizimport', '과제 현황 가져오기'], ['mailimport', '메일송부현황 가져오기'], ['backup', '백업']);
     if (!tabs.some(function (t) { return t[0] === S.adminTab; })) S.adminTab = 'projects';
     var html = '<div class="view-head"><h1>과제 관리</h1></div>' +
       '<div class="subtabs" role="tablist">' + tabs.map(function (t) {
@@ -4765,6 +4817,7 @@ var Logic_ = (function () {
     if (S.adminTab === 'import') return html + adminImport();
     if (S.adminTab === 'bizimport') return html + adminBizImport();
     if (S.adminTab === 'mailimport') return html + adminMailImport();
+    if (S.adminTab === 'mhimport') return html + adminMhImport();
     if (S.adminTab === 'backup') return html + adminBackup();
     return html + adminProjects();
   }
@@ -8840,7 +8893,7 @@ var Logic_ = (function () {
         '<label class="fld"><span class="lbl">담당 개발자</span><input class="inp" name="developer" maxlength="100" list="mh-names" value="' + esc(v.developer) + '"></label>' +
         '<label class="fld"><span class="lbl">담당 디자인</span><input class="inp" name="designer" maxlength="100" value="' + esc(v.designer) + '"></label></div>' +
         mhNameList() +
-        (x ? '<p class="hint ml-meta">작성 ' + esc(x.author || '-') + (x.updatedBy ? ' · 마지막 수정 ' + esc(x.updatedBy) : '') + (x.updatedAt ? ' ' + esc(String(x.updatedAt).slice(0, 16)) : '') + '</p>' : '') +
+        (x ? '<p class="hint ml-meta">작성 ' + esc(mhImported(x) ? '엑셀에서 가져옴' : (x.author || '-')) + (x.updatedBy ? ' · 마지막 수정 ' + esc(x.updatedBy) : '') + (x.updatedAt ? ' ' + esc(String(x.updatedAt).slice(0, 16)) : '') + '</p>' : '') +
         '</form>',
       footer: (x ? '<span class="left"><button class="btn danger-line" data-act="mh-del" data-id="' + esc(x.id) + '">삭제</button></span>' : '') +
         '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="mh-save">저장</button>'
@@ -8960,7 +9013,199 @@ var Logic_ = (function () {
     }).catch(function (e) { setBusy(false); toast((e && e.message) || '엑셀을 만들지 못했어요.', 'error'); });
   }
 
+  /* ---------- 엑셀 가져오기 (과제 관리 > 유지보수 이력 가져오기, PI만) ----------
+   * 월간보고 이력 엑셀: 사업마다 시트 하나(이름 ‘9. mToxInfo’), 1~2줄 머리글, 3줄부터 이력
+   * 머리글 이름으로 칸을 찾음 (시트마다 담당·작업 기한 순서가 달라도 됨)
+   * 날짜가 ‘12.26’처럼 연도 없이 적혀 있으면: 시트의 마지막 줄을 고른 연도로 보고, 12월 → 1월처럼 넘어간 앞쪽 줄은 전년도로 */
+  function mhHeadKey(h) {
+    if (/^구분$/.test(h)) return 'category';
+    if (/^요청자$/.test(h)) return 'requester';
+    if (/^요청일$/.test(h)) return 'requestDate';
+    if (/^(세부)?내용$/.test(h)) return 'content';
+    if (/특이사항|처리내용/.test(h)) return 'result';
+    if (/진행상황|진행상태/.test(h)) return 'status';
+    if (/작업기한|완료일|^기한$/.test(h)) return 'dueDate';
+    if (/^연구원?$/.test(h)) return 'researcher';
+    if (/^개발자?$/.test(h)) return 'developer';
+    if (/^디자인|^디자이너$/.test(h)) return 'designer';
+    return '';
+  }
+  function mhNormStatus(s) {
+    if (/완료/.test(s)) return '완료';
+    if (/보류/.test(s)) return '보류';
+    if (/대기|예정/.test(s)) return '대기';
+    if (/진행/.test(s)) return '진행중';
+    return '';
+  }
+  function mhNormCat(s) { return /시스템/.test(s) ? '시스템' : /일반/.test(s) ? '일반' : ''; }
+  function mhNameKey(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
+  // 시트 이름 → 유지보수 과제 (‘9. mToxInfo’ → mToxInfo). 번호로는 이름이 없는 시트(‘9’)만 맞춤 (번호가 같아도 이름이 다르면 맞추지 않음)
+  function mhMatchProject(sheetName) {
+    var m = /^\s*(\d+)\s*[.)]?\s*(.*)$/.exec(sheetName), no = m ? m[1] : '', name = m ? m[2] : sheetName;
+    var list = mhProjects();
+    var hit = list.filter(function (p) { return mhNameKey(p.name) === mhNameKey(name); })[0] ||
+      list.filter(function (p) { return mhNameKey(p.name) === mhNameKey(sheetName); })[0] ||
+      (no && !mhNameKey(name) ? list.filter(function (p) { return String(p.no || '') === no; })[0] : null);
+    return hit ? hit.name : '';
+  }
+  function mhParseSheet(X, ws, sheetName, lastYear) {
+    var aoa = X.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    var norm = function (row) { return (row || []).map(function (c) { return String(c === null || c === undefined ? '' : c).replace(/\s+/g, ''); }); };
+    var h = -1;
+    for (var i = 0; i < Math.min(aoa.length, 15); i++) {
+      var hs = norm(aoa[i]);
+      if (hs.indexOf('요청일') >= 0 && hs.some(function (c) { return /^(세부)?내용$/.test(c); })) { h = i; break; }
+    }
+    if (h < 0) return { sheet: sheetName, found: false };
+    // 칸 이름: 머리글 줄, 비어 있으면 그 위 줄 (구분처럼 두 줄을 합친 칸)
+    var cur = norm(aoa[h]), up = h > 0 ? norm(aoa[h - 1]) : [], map = {};
+    for (var j = 0; j < Math.max(cur.length, up.length); j++) {
+      var k = mhHeadKey(cur[j] || '') || mhHeadKey(up[j] || '');
+      if (k && map[k] === undefined) map[k] = j;
+    }
+    var rows = [], bad = [];
+    aoa.slice(h + 1).forEach(function (row, n) {
+      var cells = row.map(function (c) { return String(c === null || c === undefined ? '' : c).trim(); });
+      var get = function (k) { return map[k] === undefined ? '' : (cells[map[k]] || ''); };
+      if (!get('content') && !get('requester') && !get('requestDate')) return; // 빈 줄
+      rows.push({ n: h + n + 2, get: get, rd: mlParseDate(get('requestDate'), 0) });
+    });
+    // 연도 없는 요청일: 12월 → 1월처럼 크게 줄어든 횟수를 세서, 마지막 줄이 lastYear가 되게 앞에서부터 붙임
+    var wraps = 0, prev = 0;
+    rows.forEach(function (r) {
+      if (r.rd && r.rd.noYear) { if (prev && r.rd.m < prev - 6) wraps++; prev = r.rd.m; }
+      r.wrap = wraps;
+    });
+    var items = [], unknownStatus = 0, unknownCat = 0;
+    rows.forEach(function (r) {
+      var get = r.get, rd = r.rd;
+      if (rd && rd.noYear) rd.y = lastYear - (wraps - r.wrap);
+      var reqDate = mlYmd(rd);
+      if (!get('content')) { bad.push(r.n + '행 세부 내용 빈칸'); return; }
+      if (!reqDate) { bad.push(r.n + '행 요청일(' + (get('requestDate') || '빈칸') + ')'); return; }
+      var dd = mlParseDate(get('dueDate'), rd.y);
+      if (dd && dd.noYear && dd.m < rd.m - 6) dd.y = rd.y + 1; // 12월 요청 → 1월 완료
+      var st = mhNormStatus(get('status')), cat = mhNormCat(get('category'));
+      if (!st) unknownStatus++;
+      if (!cat) unknownCat++;
+      items.push({ sheet: sheetName, row: r.n, category: cat || '일반', requester: get('requester'), requestDate: reqDate, content: get('content'),
+        result: get('result'), status: st || '진행중', dueDate: mlYmd(dd), researcher: get('researcher'), developer: get('developer'), designer: get('designer') });
+    });
+    return { sheet: sheetName, found: true, items: items, bad: bad, unknownStatus: unknownStatus, unknownCat: unknownCat };
+  }
+  var mhImp = null; // 읽은 엑셀 (연도를 바꾸면 다시 읽음)
+  function mhImported(x) { return x.author === L.IMPORT_AUTHOR; }
+  function adminMhImport() {
+    var n = mhAll().length, imported = mhAll().filter(mhImported).length;
+    return '<div class="card"><div class="card-head"><h2>유지보수 이력 가져오기 <span class="h-sub">PI만</span></h2></div>' +
+      '<p class="hint" style="margin-top:0">월간보고용 <b>유지보수 이력</b> 엑셀(.xlsx, 사업마다 시트 하나)을 고르면 ‘요청일’·‘세부 내용’ 머리글이 있는 시트를 찾아 미리보기를 보여 줘요.' +
+      ' 시트 이름(예: 9. mToxInfo)으로 유지보수 과제를 맞추고, 다르면 미리보기에서 고를 수 있어요. 같은 사업·요청일·세부 내용의 이력이 이미 있으면 건너뛰어요. 지금 유지보수 이력에는 <b>' + n + '건</b>이 있어요.</p>' +
+      '<div class="drop"><input type="file" id="mh-import-file" accept=".xlsx,.xls" aria-label="유지보수 이력 엑셀 선택"><span class="hint">.xlsx 파일을 고르면 미리보기를 보여줘요. 아직 저장되지는 않아요.</span></div>' +
+      // 가져온 이력 지우기 (연도를 잘못 골랐을 때 등 다시 가져오기 전 정리용). 화면에서 직접 적은 이력은 남음
+      (imported ? '<div class="toolbar" style="margin-top:12px"><span class="hint">엑셀에서 가져온 이력이 ' + imported + '건 있어요. 다시 가져오려면 먼저 지울 수 있어요 (화면에서 직접 적은 이력은 지워지지 않아요).</span>' +
+        '<span class="spacer"></span><button class="btn danger" data-act="mh-clear-imported">가져온 이력 지우기 (' + imported + '건)</button></div>' : '') +
+      '</div>';
+  }
+  function mhReadFile(file) {
+    if (!file) return;
+    if (!isPI()) { toast('엑셀 가져오기는 PI만 할 수 있어요.', 'error'); return; }
+    if (!mhProjects().length) { toast('유지보수 과제가 없어요. 먼저 과제 관리에서 유지보수 과제를 만들어 주세요.', 'error'); return; }
+    setBusy(true);
+    var reader = new FileReader();
+    reader.onload = function () {
+      loadXLSX().then(function (X) {
+        mhImp = { X: X, wb: X.read(new Uint8Array(reader.result), { type: 'array' }), fileName: file.name, year: +today().slice(0, 4) };
+        setBusy(false);
+        mhOpenImport();
+      }).catch(function (e) { setBusy(false); toast('엑셀을 읽지 못했어요: ' + e.message, 'error'); });
+    };
+    reader.onerror = function () { setBusy(false); toast('파일을 읽지 못했어요.', 'error'); };
+    reader.readAsArrayBuffer(file);
+  }
+  // 시트마다 읽고, 사업을 맞추고, 이미 있는 줄을 셈 (사업·연도를 바꾸면 다시)
+  function mhImportItems() {
+    var imp = mhImp, have = {};
+    var key = function (x) { return [x.project, x.requestDate, String(x.content || '').replace(/\s+/g, ' ').trim()].join('|'); };
+    mhAll().forEach(function (x) { have[key(x)] = true; });
+    var prev = {};
+    (imp.sheets || []).forEach(function (s) { prev[s.sheet] = { pick: s.pick, target: s.target }; });
+    imp.sheets = imp.wb.SheetNames.map(function (n) { return mhParseSheet(imp.X, imp.wb.Sheets[n], n, imp.year); }).filter(function (s) { return s.found; });
+    imp.sheets.forEach(function (s) {
+      var p = prev[s.sheet];
+      s.target = p ? p.target : mhMatchProject(s.sheet);
+      s.pick = p ? p.pick && !!s.target : !!s.target && s.items.length > 0;
+      var seen = {};
+      s.dup = s.target ? s.items.filter(function (x) { var k = key({ project: s.target, requestDate: x.requestDate, content: x.content }), d = have[k] || seen[k]; seen[k] = true; return d; }).length : 0;
+    });
+  }
+  function mhOpenImport() {
+    var imp = mhImp;
+    mhImportItems();
+    if (!imp.sheets.length) { mhImp = null; toast('이 파일에서 이력 표를 찾지 못했어요. ‘요청일’과 ‘세부 내용’ 머리글이 있는 시트가 필요해요.', 'error'); return; }
+    var ys = [], cy = +today().slice(0, 4);
+    for (var y = cy - 3; y <= cy + 1; y++) ys.push(String(y));
+    var projOpts = [['', '가져오지 않음']].concat(mhProjects().map(function (p) { return [p.name, p.name]; }));
+    var rowsHtml = imp.sheets.map(function (s, i) {
+      var dates = s.items.map(function (x) { return x.requestDate; }).sort();
+      var warn = [];
+      if (s.bad.length) warn.push('읽지 못한 줄 ' + s.bad.length + '개: ' + s.bad.slice(0, 5).join(', ') + (s.bad.length > 5 ? ' …' : ''));
+      if (s.unknownStatus) warn.push('작업 진행 상황을 알 수 없는 ' + s.unknownStatus + '줄은 ‘진행중’으로');
+      if (s.unknownCat) warn.push('구분을 알 수 없는 ' + s.unknownCat + '줄은 ‘일반’으로');
+      return '<tr><td><label class="check"><input type="checkbox" data-mh-pick="' + i + '"' + (s.pick ? ' checked' : '') + (s.target ? '' : ' disabled') + '> <b>' + esc(s.sheet) + '</b></label></td>' +
+        '<td><select class="inp" data-mh-target="' + i + '" aria-label="' + esc(s.sheet) + ' 넣을 사업">' + options(projOpts, s.target) + '</select></td>' +
+        '<td class="num">' + s.items.length + '건</td><td class="num">' + (s.target ? (s.items.length - s.dup) + '건' : '-') + '</td><td class="num">' + (s.dup ? s.dup + '건' : '-') + '</td>' +
+        '<td class="date">' + (dates.length ? esc(dates[0]) + ' ~ ' + esc(dates[dates.length - 1]) : '-') + '</td></tr>' +
+        (warn.length ? '<tr><td colspan="6"><span class="warn-text">' + esc(warn.join(' · ')) + '</span></td></tr>' : '');
+    }).join('');
+    var m = openModal({
+      title: '유지보수 이력 가져오기 · ' + imp.fileName, size: 'wide',
+      body: '<p class="hint" style="margin-top:0">체크한 시트만, 고른 사업으로 가져와요. 시트 이름으로 사업을 못 찾았으면 넣을 사업을 골라 주세요.</p>' +
+        '<label class="fld" style="max-width:320px"><span class="lbl">마지막 줄의 연도 <span class="hint">‘12.26’처럼 연도 없는 날짜에 붙임</span></span>' +
+        '<select class="inp" id="mh-imp-year">' + options(ys.map(function (y) { return [y, y + '년']; }), String(imp.year)) + '</select></label>' +
+        '<p class="hint" style="margin:6px 0 12px">시트의 마지막 줄을 이 연도로 보고, 12월 → 1월처럼 넘어간 앞쪽 줄은 전년도로 붙여요. 요청일 범위를 보고 맞는지 확인하세요.</p>' +
+        '<div class="tbl-wrap" style="max-height:none"><table class="tbl"><thead><tr><th>시트</th><th>넣을 사업</th><th>읽은 줄</th><th>새로 넣을 줄</th><th>이미 있음</th><th>요청일 범위</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>',
+      footer: '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="mh-imp-go">가져오기</button>',
+      onMount: function (el) {
+        el.addEventListener('change', function (e) {
+          if (e.target.id === 'mh-imp-year') { imp.year = +e.target.value; mhOpenImport(); return; }
+          var ti = e.target.getAttribute('data-mh-target');
+          if (ti !== null) { var s = imp.sheets[+ti]; s.target = e.target.value; s.pick = !!s.target; mhOpenImport(); return; }
+          var pi = e.target.getAttribute('data-mh-pick');
+          if (pi !== null) imp.sheets[+pi].pick = e.target.checked;
+        });
+      }
+    });
+    var going = false, goBtn = $('#mh-imp-go', m);
+    goBtn.addEventListener('click', function () {
+      if (going) return;
+      var items = [];
+      imp.sheets.forEach(function (s) {
+        if (s.pick && s.target) items = items.concat(s.items.map(function (x) { var o = {}; Object.keys(x).forEach(function (k) { o[k] = x[k]; }); o.project = s.target; return o; }));
+      });
+      if (!items.length) { toast('가져올 시트를 골라 주세요.', 'error'); return; }
+      going = true; goBtn.disabled = true;
+      call('importMaintHistory', { items: items }).then(function (res) {
+        mhImp = null; closeModal(); applyState(res);
+        var info = res.info || {};
+        toast((info.added || 0) + '건을 가져왔어요' + (info.skipped ? ' · 이미 있는 ' + info.skipped + '건은 건너뜀' : '') + '. 유지보수 > 이력에서 볼 수 있어요.');
+      }, function () { going = false; goBtn.disabled = false; });
+    });
+  }
+  // 엑셀 파일 고르기 (같은 파일을 다시 골라도 읽히게 값은 비움)
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'mh-import-file') { mhReadFile(e.target.files[0]); e.target.value = ''; }
+  });
+
   var MH_ACTIONS = {
+    // 과제 관리 > 유지보수 이력 가져오기: 엑셀에서 가져온 이력만 모두 지우기 (PI)
+    'mh-clear-imported': function () {
+      var n = mhAll().filter(mhImported).length;
+      if (!n) return;
+      confirmBox('엑셀에서 가져온 유지보수 이력 <b>' + n + '건</b>을 모두 지울까요?<br><span class="hint">화면에서 직접 적은 이력은 지워지지 않아요. 되돌릴 수 없어요.</span>', '가져온 이력 지우기', true).then(function (ok) {
+        if (!ok) return;
+        call('clearImportedMaintHistory', {}).then(function (res) { applyState(res); toast('가져온 이력 ' + ((res.info || {}).count || 0) + '건을 지웠어요.'); }, noop);
+      });
+    },
     // 연구사업 > 진행사항(유지보수 과제): 진행 단계 / 이력 보기 (이 브라우저에 기억)
     'bz-mview': function (el) { S.bz.mview = el.getAttribute('data-view') === 'history' ? 'history' : 'stage'; savePrefs(); renderView(); },
     'mh-add': function (el) { openMhModal('', el.getAttribute('data-project') || ''); },
