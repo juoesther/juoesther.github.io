@@ -4615,10 +4615,11 @@ var Logic_ = (function () {
       var prev = form.receiptNo ? form.receiptNo.value : (o.receiptNo || '');
       var prevMode = form.querySelector('input[name=receiptMode]:checked');
       var mode = canNew ? (prevMode ? prevMode.value : (o.receiptNo ? 'existing' : 'new')) : 'existing';
+      // 고르기 안내 항목 없이 최근 안건이 먼저 골라져 있음 (목록에는 실제 접수번호만)
       var sel = '<select class="inp" name="receiptNo"' + (mode === 'new' ? ' hidden' : '') + '>' + options(list.map(function (s) {
         var t = s.title.length > 42 ? s.title.slice(0, 42) + '…' : s.title;
         return [s.receiptNo, s.receiptNo + ' · ' + t + ' (현재 ' + stageText(s.record.stage) + ')'];
-      }), prev, '접수번호를 고르세요') + '</select>';
+      }), prev) + '</select>';
       var html = '<span class="lbl">접수번호' + REQ + '</span>';
       if (canNew) {
         html += '<div class="radio-line"><label class="receipt-new-opt"><input type="radio" name="receiptMode" value="new"' + (mode === 'new' ? ' checked' : '') + '> 새 접수번호 ' +
@@ -4638,10 +4639,18 @@ var Logic_ = (function () {
       $('#request-fld', m).hidden = !showRequest();
       $('#progress-row', m).hidden = st !== '진행중';
     }
+    // 기존 접수번호에 이어 쓸 때: 업무 내용이 비어 있거나 자동으로 넣은 안건 제목이면 고른 안건의 제목으로 (직접 쓴 내용은 그대로)
+    var autoTitle = '';
     function fillFromReceipt() {
-      if (editing || !form.receiptNo || !form.receiptNo.value || form.content.value.trim()) return;
+      if (editing || !form.receiptNo) return;
+      var cur = form.content.value.trim();
+      if (!existingMode() || !form.receiptNo.value) { // 새 접수번호로 바꾸면 자동으로 넣은 제목은 지움
+        if (autoTitle && cur === autoTitle) { form.content.value = ''; autoTitle = ''; }
+        return;
+      }
+      if (cur && cur !== autoTitle) return;
       var s = L.summarize(recordsOf(currentProject(), form.receiptNo.value), today(), 0)[0];
-      if (s) form.content.value = s.title;
+      if (s) { form.content.value = s.title; autoTitle = s.title; }
     }
 
     renderReceipt(); syncVisibility(); fillFromReceipt();
@@ -4656,7 +4665,7 @@ var Logic_ = (function () {
     function existingMode() { var c = form.querySelector('input[name=receiptMode]:checked'); return next || (c && c.value === 'existing') || L.NEW_RECEIPT_STAGES.indexOf(currentStage()) < 0; }
     form.addEventListener('change', function (e) {
       var n = e.target.name;
-      if (n === 'project') renderReceipt();
+      if (n === 'project') { renderReceipt(); fillFromReceipt(); }
       if (n === 'stage') {
         renderReceipt(); syncVisibility(); fillFromReceipt();
         // 이미 있는 안건에 비기능을 이어 쓰면 그 안건은 끝(종결) → 상태를 완료로 미리 골라 둠 (바꿀 수 있음)
@@ -4665,6 +4674,7 @@ var Logic_ = (function () {
       if (n === 'receiptMode') {
         form.receiptNo.hidden = e.target.value !== 'existing';
         if (e.target.value === 'existing') { form.receiptNo.focus(); if (currentStage() === '비기능') setStatus('완료'); }
+        fillFromReceipt();
       }
       if (n === 'receiptNo') fillFromReceipt();
       if (n === 'date' && form.receiptNew && !receiptEdited) form.receiptNew.value = autoReceiptNo(); // 자동 번호는 작성일을 따라감
@@ -5874,10 +5884,19 @@ var Logic_ = (function () {
 
   /* 연간 계획표의 월별 일정 편집 창 */
   var msOpen = null;
-  // 일정 종류: 보고·발표·회의·기타 중에서만 고름 (새 일정은 '종류'를 꼭 골라야 저장)
+  // 일정 종류: 보고·발표·회의·기타 중에서만 고름 (목록에 ‘종류’ 같은 안내 항목 없음)
+  // 새 일정은 기타로 시작하고, 내용을 쓰는 동안 글자에 맞춰 바뀜(발표·회의·보고). 종류를 직접 고르면 그대로 둠
   function msKindSelect(attr, value) {
-    return '<select class="inp ms-kind" ' + attr + ' aria-label="종류">' + options(L.MS_KINDS, value || '', value ? undefined : '종류') + '</select>';
+    return '<select class="inp ms-kind" ' + attr + ' aria-label="종류">' + options(L.MS_KINDS, value || '기타') + '</select>';
   }
+  document.addEventListener('input', function (e) {
+    if (!e.target || e.target.id !== 'ms-new') return;
+    var k = $('#ms-new-kind');
+    if (k && k.getAttribute('data-auto') === '1') k.value = L.milestoneKind({ content: e.target.value });
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'ms-new-kind') e.target.removeAttribute('data-auto'); // 직접 고르면 더는 바꾸지 않음
+  });
   function msBody() {
     var items = (S.data.milestones || []).filter(function (m) { return m.project === msOpen.project && m.month === msOpen.month; });
     return (items.length ? '<div class="ms-list">' + items.map(function (m) {
@@ -5886,7 +5905,7 @@ var Logic_ = (function () {
         '<button class="btn sm" data-act="ms-save" data-id="' + esc(m.id) + '">저장</button><button class="btn sm danger-line" data-act="ms-del" data-id="' + esc(m.id) + '">삭제</button></div>';
     }).join('') + '</div>' : '') +
       '<div class="ms-row ms-head" aria-hidden="true"><span class="lbl">새 일정 내용 <em>*</em></span><span class="lbl">종류 <em>*</em></span><button type="button" class="btn primary ghost-btn" tabindex="-1" disabled>추가</button></div>' +
-      '<div class="ms-row ms-new"><input class="inp" id="ms-new" maxlength="200" placeholder="예: 착수보고, 진도점검(발표)" aria-label="새 일정 내용 (필수)">' + msKindSelect('id="ms-new-kind"', '') +
+      '<div class="ms-row ms-new"><input class="inp" id="ms-new" maxlength="200" placeholder="예: 착수보고, 진도점검(발표)" aria-label="새 일정 내용 (필수)">' + msKindSelect('id="ms-new-kind" data-auto="1"', '기타') +
       '<button class="btn primary" data-act="ms-add">추가</button></div>';
   }
   function openMsModal(project, month) {
@@ -5903,8 +5922,7 @@ var Logic_ = (function () {
   function msAdd() {
     var inp = $('#ms-new');
     if (!inp || !inp.value.trim()) { toast('일정 내용을 입력해 주세요.', 'error'); return; }
-    var kind = $('#ms-new-kind').value;
-    if (!kind) { toast('종류(보고·발표·회의·기타)를 골라 주세요.', 'error'); $('#ms-new-kind').focus(); return; }
+    var kind = $('#ms-new-kind').value || '기타';
     call('saveMilestone', { project: msOpen.project, month: msOpen.month, content: inp.value.trim(), kind: kind })
       .then(function (res) { applyState(res); refreshMsModal(); }, noop);
   }
@@ -8479,19 +8497,19 @@ var Logic_ = (function () {
         '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="oc-save">저장</button>'
     });
     var form = $('#oc-form', m);
-    // 대분류 → 중분류 → 성과지표를 차례로 고름
+    // 대분류 → 중분류 → 성과지표를 차례로 고름. 목록에는 실제 항목만 (고르기 안내 항목 없음):
+    // 새 성과지표는 각 목록의 첫 항목이 골라져 있고, 위 칸을 바꾸면 아래 칸은 그 분류의 첫 항목으로
     function fill() {
       var a = L.OUTCOME_TYPES.filter(function (t) { return t[0] === form.cat1.value; })[0];
+      form.cat2.innerHTML = options(a ? a[1].map(function (t) { return t[0]; }) : [], c2);
       var b = a ? a[1].filter(function (t) { return t[0] === form.cat2.value; })[0] : null;
-      form.cat2.innerHTML = options(a ? a[1].map(function (t) { return t[0]; }) : [], form.cat2.value || c2, '중분류 고르기');
-      b = a ? a[1].filter(function (t) { return t[0] === form.cat2.value; })[0] : null;
-      form.cat3.innerHTML = options(b ? b[1] : [], form.cat3.value || c3, '성과지표 고르기');
+      form.cat3.innerHTML = options(b ? b[1] : [], c3);
     }
-    form.cat1.innerHTML = options(L.OUTCOME_TYPES.map(function (t) { return t[0]; }), c1, '대분류 고르기');
+    form.cat1.innerHTML = options(L.OUTCOME_TYPES.map(function (t) { return t[0]; }), c1);
     fill();
     form.addEventListener('change', function (e) {
-      if (e.target.name === 'cat1') { c2 = ''; c3 = ''; form.cat2.value = ''; form.cat3.value = ''; fill(); }
-      if (e.target.name === 'cat2') { c3 = ''; form.cat3.value = ''; fill(); }
+      if (e.target.name === 'cat1') { c2 = ''; c3 = ''; fill(); }
+      if (e.target.name === 'cat2') { c2 = form.cat2.value; c3 = ''; fill(); }
     });
     $('#oc-save', m).addEventListener('click', function () {
       var payload = { project: project, yearNo: yearNo, cat1: form.cat1.value, cat2: form.cat2.value, cat3: form.cat3.value,
