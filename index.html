@@ -474,6 +474,20 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .rp-paste textarea { width: 100%; min-height: 190px; font-size: 14px; line-height: 1.7; resize: vertical; }
 .rp-paste-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .rp-carried { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 4px; font-size: 12px; font-weight: 600; background: var(--warn-wash); color: var(--warn-ink); border: 1px solid var(--warn-mark); white-space: nowrap; }
+/* 주간 업무 완료 → 일간 이행내용에 넣은 날 / 넣지 않음 */
+.rp-daily-tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; font-weight: 600; background: var(--accent-wash); color: var(--accent-strong); border: 1px solid var(--accent); white-space: nowrap; }
+.rp-daily-tag.off { background: var(--surface-3); color: var(--muted); border-color: var(--line); }
+.rp-daily-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.rp-daily-row .inp[type=date] { width: 160px; }
+.rp-done-tbl td { vertical-align: middle; }
+.rp-done-tbl td.nowrap { white-space: nowrap; }
+.rp-done-tbl .inp[type=date] { width: 150px; }
+/* 일일 업무보고 → 구글 시트 반영 상태 (머리 아래 얇은 줄) */
+.rp-sheet-bar { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.rp-sheet-bar .btn { margin-left: auto; }
+.rp-sheet { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-sheet.ok { color: var(--good-ink); }
+.rp-sheet.bad { color: var(--danger); }
 /* 주간: 지난 4주 안 끝난 업무 */
 .rp-carry { margin-bottom: 14px; border-color: var(--warn-mark); }
 .rp-carry .panel-head .hint { font-size: 12.5px; }
@@ -950,7 +964,7 @@ var Logic_ = (function () {
   /* ---------- 과제(사업) ---------- */
   // 서버 코드 지문: build.ps1이 서버 쪽 코드(logic·supa-core·서버 입구)로 만든 값을 넣음. 화면 파일과 서버에 같은 값이 들어감
   // 서버가 돌려준 값이 화면과 다르면(서버를 다시 Deploy하지 않음) 화면이 PI·PM에게 알려 줌
-  var SERVER_BUILD = '933c4858e6c2';
+  var SERVER_BUILD = 'd8c5b37b567b';
   var KINDS = ['연구', '유지보수']; // 화면에서는 '연구' → ‘연구사업’으로 보여 줌
   var RESEARCH_TYPES = ['연구용역', '일반용역', '출연과제', '정책연구']; // 연구사업 종류
   function kindOf(p) { return p && p.kind === '연구' ? '연구' : '유지보수'; }
@@ -1066,6 +1080,9 @@ var Logic_ = (function () {
         ['linkKey', '연동원본'],
         ['hidden', '숨김'], // 'Y': 연동 기록을 업무보고에서만 지움 (원래 기록은 그대로)
         ['carryFrom', '이월원본'], // 지난 주 안 끝난 주간 업무를 이번 주로 가져온 경우 그 원래 업무 ID
+        // 주간 업무를 완료할 때 일간 이행내용에 넣을 날짜: 날짜면 그날 일일 업무보고에 들어감, 'N'이면 넣지 않음,
+        // 비어 있으면 예전 방식(완료한 날, doneDate)
+        ['dailyDate', '일간반영일'],
         ['team', '팀업무']] // 'Y': 팀 업무 (PI·PEO·PM이 쓰고 PEO 모두가 봄. 내 업무·전체 현황에는 안 들어감)
         // 팀업무숨김(teamHidden)은 없앰 (주간 업무가 팀 업무에 연동되지 않으므로. Supabase는 열도 지움: supa-core.js DROPPED)
     },
@@ -2452,6 +2469,22 @@ var Logic_ = (function () {
         return { state: loadFor(u), info: { reverted: reverted } };
       });
     }
+    // 주간 업무 완료 → 일간 이행내용에 넣을 날짜 (날짜 / 'N' 넣지 않음). 오늘 이후 날짜는 안 됨
+    function dailyDateOf(v) {
+      v = str(v);
+      if (v === 'N') return 'N';
+      if (!v) return '';
+      var d = cleanDate(v);
+      if (!d) fail('일간에 넣을 날짜를 다시 골라 주세요.');
+      if (d > env.today()) fail('일간에 넣을 날짜는 오늘 이후로 고를 수 없어요.');
+      return d;
+    }
+    // 저장할 때: 내 주간 업무(팀 업무 아님)를 완료로 둘 때만. 화면이 보내지 않으면(예전 화면) 이미 완료였던 값을 유지
+    function weeklyDailyDate(p, cur, status, kind, isTeam) {
+      if (kind !== '주간' || isTeam || status !== '완료') return '';
+      if (p.dailyDate !== undefined && p.dailyDate !== null && str(p.dailyDate) !== '') return dailyDateOf(p.dailyDate);
+      return cur && str(cur.status) === '완료' ? str(cur.dailyDate) : '';
+    }
     function saveReport(u, p) {
       if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
       return store.withLock(function () {
@@ -2486,6 +2519,7 @@ var Logic_ = (function () {
           content: validateText(p.content, '세부내용', 1000, true), note: validateText(p.note, '비고', 300, false),
           status: status, progress: String(prog),
           doneDate: status === '완료' ? ((cur && cur.status === '완료' && cur.doneDate) || env.today()) : '',
+          dailyDate: linkKey ? '' : weeklyDailyDate(p, cur, status, kind, isTeam),
           hidden: linkKey && (p.hidden === true || p.hidden === 'Y') ? 'Y' : '', // 연동 항목만 업무보고에서 지울 수 있음
           updatedAt: env.now()
         };
@@ -2619,12 +2653,23 @@ var Logic_ = (function () {
         return { state: loadFor(u), info: { added: add.length, skipped: skipped } };
       });
     }
-    // 여러 업무를 한 번에 완료(100%)·보류로 (지난주 안 끝난 업무 정리용)
+    // 일일 업무보고를 구글 시트(AX 일일 업무보고)에 쓰기: 오늘 보고만, 로그인한 본인 이름 칸에만
+    // 여기서는 확인만 하고, 실제로 시트에 보내는 건 서버 입구(Supabase)가 함 (시트 웹앱 주소·비밀 키는 서버 비밀값)
+    function pushDailySheet(u, p) {
+      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      var date = cleanDate(p.date);
+      if (date !== env.today()) fail('오늘 보고만 시트에 쓸 수 있어요.');
+      return { sheetForward: { name: u.name, date: date,
+        text: validateText(p.text, '이행내용', 5000, false), idle: validateText(p.idle, '미진행 과제', 1000, false) } };
+    }
+    // 여러 업무를 한 번에 완료(100%)·보류로 (이번 주 완료 처리, 지난주 안 끝난 업무 정리)
+    // daily: { 업무ID: 날짜 | 'N' } 완료한 주간 업무를 일간 이행내용에 넣을 날짜 (없으면 예전 방식: 완료한 날)
     function setReportsStatus(u, p) {
       if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
       var ids = uniq((p.ids || []).map(str)), status = str(p.status);
       if (['완료', '보류'].indexOf(status) < 0) fail('완료 또는 보류만 고를 수 있어요.');
       if (!ids.length) fail('업무를 골라 주세요.');
+      var daily = p.daily && typeof p.daily === 'object' ? p.daily : {};
       return store.withLock(function () {
         var list = store.list('reports'), now = env.now(), today = env.today(), ups = [], logs = [];
         ids.forEach(function (id) {
@@ -2632,7 +2677,8 @@ var Logic_ = (function () {
           if (!cur) fail('업무를 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.');
           if (!canEditReport(u, cur)) fail('본인 업무만 바꿀 수 있어요.');
           var up = status === '완료'
-            ? { id: id, status: '완료', progress: '100', doneDate: cur.doneDate || today, updatedAt: now }
+            ? { id: id, status: '완료', progress: '100', doneDate: cur.doneDate || today, updatedAt: now,
+              dailyDate: cur.kind === '주간' && cur.team !== 'Y' && !cur.linkKey ? dailyDateOf(daily[id]) : '' }
             : { id: id, status: '보류', updatedAt: now };
           ups.push(up);
           // 팀 업무면 진행 기록에도 남김
@@ -3015,6 +3061,7 @@ var Logic_ = (function () {
         case 'saveMaintHistory': return saveMaintHistory(u, p);
         case 'deleteMaintHistory': return deleteMaintHistory(u, p);
         case 'importMaintHistory': return importMaintHistory(u, p);
+        case 'pushDailySheet': return pushDailySheet(u, p);
         case 'clearImportedMaintHistory': return clearImportedMaintHistory(u);
         case 'importBiz': return importBiz(u, p);
         case 'clearImportedBiz': return clearImportedBiz(u);
@@ -3842,6 +3889,7 @@ var Logic_ = (function () {
       // 화면 위치를 지키면서 다시 그림
       var y = window.scrollY, wraps = $$('#view .tbl-wrap, #view .plan-wrap').map(function (w) { return [w.scrollTop, w.scrollLeft]; });
       S.data = res.state; S.user = res.state.user;
+      rpSheetWatch(false); // 다른 PC에서 고친 내 오늘 업무보고도 구글 시트에
       renderView();
       $$('#view .tbl-wrap, #view .plan-wrap').forEach(function (w, i) { if (wraps[i]) { w.scrollTop = wraps[i][0]; w.scrollLeft = wraps[i][1]; } });
       window.scrollTo(0, y);
@@ -3960,6 +4008,7 @@ var Logic_ = (function () {
     S.data = state;
     S.user = state.user;
     sessionSet({ token: S.token, user: S.user });
+    rpSheetWatch(true); // 구글 시트: 로그인만으로는 보내지 않고 지금 내용을 기준으로 잡음
     var allowed = availableTabs().map(function (t) { return t[0]; });
     // 로그인·새로고침으로 처음 들어올 때만: 유지보수 진행사항의 과제 선택 기본값
     // (PMO 계정은 mFCDB, 그 외는 전체 과제. 이전 계정이 고른 과제는 넘겨받지 않음)
@@ -4106,7 +4155,7 @@ var Logic_ = (function () {
       (isPI() ? '' : ' (PI에게 알려 주세요)') + '</div>';
   }
   function applyState(res) {
-    if (res && res.state) { S.data = res.state; S.user = res.state.user; storageSoon(); } // 저장했으면 저장 공간도 다시 잼
+    if (res && res.state) { S.data = res.state; S.user = res.state.user; storageSoon(); rpSheetWatch(false); } // 저장했으면 저장 공간도 다시 잼 · 오늘 업무보고가 바뀌었으면 구글 시트에
     renderView();
     refreshHistoryIfOpen();
   }
@@ -7270,10 +7319,12 @@ var Logic_ = (function () {
     });
     return out;
   }
-  // 일일 업무보고에 들어가는 것: 그날 일간 업무 + 그날 완료한 주간 업무 + 연동
+  // 일일 업무보고에 들어가는 것: 그날 일간 업무 + 그날 일간에 넣은 완료 주간 업무 + 연동
+  // 주간 업무: 완료할 때 고른 ‘일간에 넣을 날짜’(dailyDate) 기준. ‘N’이면 넣지 않음. 예전 업무(비어 있음)는 완료한 날(doneDate)
+  function rpWeeklyDailyOn(r) { return r.status === '완료' ? (r.dailyDate || r.doneDate || '') : ''; }
   function rpDailyItems(name, d) {
     var mine = (S.data.reports || []).filter(function (r) {
-      return !r.linkKey && r.team !== 'Y' && r.author === name && ((r.kind === '일간' && r.date === d) || (r.kind === '주간' && r.status === '완료' && r.doneDate === d));
+      return !r.linkKey && r.team !== 'Y' && r.author === name && ((r.kind === '일간' && r.date === d) || (r.kind === '주간' && rpWeeklyDailyOn(r) === d));
     });
     return mine.concat(rpLinked(name, d));
   }
@@ -7313,9 +7364,11 @@ var Logic_ = (function () {
       (onlyDone ? done :
         '<div class="rp-sub">담당과제</div><div class="rp-line">' + esc(assigned.join(', ') || '-') + '</div>' +
         '<div class="rp-sub">이행내용</div>' + done +
-        '<div class="rp-sub">미진행 과제</div><div class="rp-line">' + (idle.length ? '* ' + esc(idle.join(', ')) + ' 진행사항 없음' : '* 없음') + '</div>') +
+        '<div class="rp-sub">미진행 과제</div><div class="rp-line">' + esc(rpIdleLine(idle)) + '</div>') +
       '</div>';
   }
+  // 미진행 과제 한 줄 (구글 시트 일일 업무보고와 같은 모양)
+  function rpIdleLine(idle) { return idle.length ? '* ' + idle.join(', ') + ' 진행사항 없음' : '* 진행사항 없음'; }
   function rpCopyText(names, d, withHead, kind) {
     return names.map(function (name) {
       var items = rpItems(name, d, kind || '일간');
@@ -7325,6 +7378,70 @@ var Logic_ = (function () {
         return '[' + pn + ']\n' + g.by[pn].slice().sort(rpByOrder).map(rpLine).join('\n');
       }).join('\n');
     }).filter(Boolean).join('\n\n');
+  }
+
+  /* ---------- 일일 업무보고 → 구글 시트 (AX 일일 업무보고) ----------
+   * 오늘 내 이행내용·미진행 과제가 바뀌면(일간 업무 저장·수정·삭제, 오늘 쓴 유지보수·사업 기록, 일간에 넣은 주간 업무)
+   * 잠깐 뒤에 서버로 보내고, 서버가 시트의 내 이름 칸(8행 이행내용 · 9행 미진행 과제)에 씀. 시트 C1 날짜가 오늘일 때만
+   * 로그인하거나 새로 불러온 것만으로는 보내지 않음 (내용이 바뀌었을 때만). 일일 업무보고의 [시트에 올리기]로 직접 보낼 수도 있음
+   * Supabase 서버에서만 (체험 모드·구글 시트 서버는 안 함) */
+  var RP_SHEET = { base: null, timer: null, status: null, off: '' };
+  var RP_SHEET_OFF = { setup: 1, secret: 1, name: 1, sheet: 1 }; // 이런 답이면 이번 접속에서는 자동으로 다시 보내지 않음
+  function rpSheetOn() { return Backend.mode === 'supabase' && !!S.user && !!S.data && seesBiz(); }
+  function rpSheetPayload(d) {
+    var me = S.user.name, g = rpGroup(rpItems(me, d, '일간'), 'project');
+    var idle = rpAssigned(me).filter(function (p) { return !g.by[p]; });
+    return { date: d, text: rpCopyText([me], d, false), idle: rpIdleLine(idle) };
+  }
+  // 데이터가 새로 들어올 때마다 (initial: 로그인·처음 불러옴 → 기준만 잡고 보내지 않음)
+  function rpSheetWatch(initial) {
+    if (initial) { clearTimeout(RP_SHEET.timer); RP_SHEET.status = null; RP_SHEET.off = ''; } // 다른 계정으로 들어와도 처음부터
+    if (!rpSheetOn()) return;
+    var p = rpSheetPayload(today()), key = p.text + '\u0001' + p.idle, b = RP_SHEET.base;
+    RP_SHEET.base = { date: p.date, key: key };
+    if (initial || !b || b.date !== p.date || b.key === key || RP_SHEET.off) return;
+    clearTimeout(RP_SHEET.timer);
+    RP_SHEET.timer = setTimeout(function () { rpSheetPush(false); }, 1500); // 여러 건을 잇달아 저장해도 한 번만
+  }
+  function rpSheetPush(manual) {
+    if (!rpSheetOn()) return;
+    clearTimeout(RP_SHEET.timer);
+    var p = rpSheetPayload(today());
+    RP_SHEET.status = { busy: true };
+    rpSheetPaint();
+    // 저장 버튼 잠금·로딩 표시 없이 조용히 보냄 (다른 저장을 막지 않음)
+    Backend.call({ action: 'pushDailySheet', payload: p, token: S.token }).then(function (res) {
+      takeToken(res);
+      var s = (res && res.sheet) || { ok: false, code: 'hook', error: '시트 답이 없어요.' };
+      s.at = new Date();
+      RP_SHEET.status = s;
+      RP_SHEET.off = s.ok ? '' : (RP_SHEET_OFF[s.code] ? s.code : '');
+      rpSheetPaint();
+      if (manual) toast(s.ok ? '구글 시트(' + (s.cells || []).join('·') + ')에 올렸어요.' : s.error || '시트에 올리지 못했어요.', s.ok ? '' : 'error');
+    }, function (err) {
+      var msg = String((err && err.message) || err);
+      if (msg.indexOf('AUTH:') === 0) { logout(msg.slice(5)); return; }
+      RP_SHEET.status = { ok: false, code: 'hook', error: msg, at: new Date() };
+      rpSheetPaint();
+      if (manual) toast(msg, 'error');
+    });
+  }
+  function rpSheetStatusHtml() {
+    var s = RP_SHEET.status;
+    if (!s) return '<span class="rp-sheet" id="rp-sheet" title="오늘 이행내용·미진행 과제가 바뀌면 구글 시트(AX 일일 업무보고)의 내 칸에 자동으로 써요">구글 시트 · 오늘 내용이 바뀌면 자동으로 써요</span>';
+    if (s.busy) return '<span class="rp-sheet" id="rp-sheet">시트에 올리는 중…</span>';
+    var at = s.at ? ('0' + s.at.getHours()).slice(-2) + ':' + ('0' + s.at.getMinutes()).slice(-2) : '';
+    if (s.ok) return '<span class="rp-sheet ok" id="rp-sheet" title="구글 시트 AX 일일 업무보고에 썼어요">✓ 시트 ' + esc((s.cells || []).join('·')) + ' 반영 ' + at + '</span>';
+    var short = s.code === 'date' ? '시트 날짜(C1)가 오늘이 아니라 안 씀' : s.code === 'name' ? '시트에 내 이름 칸 없음'
+      : s.code === 'setup' || s.code === 'secret' ? '시트 연동 설정 전' : '시트 반영 실패';
+    return '<span class="rp-sheet bad" id="rp-sheet" title="' + esc(s.error || '') + '">⚠ ' + short + (at ? ' ' + at : '') + '</span>';
+  }
+  function rpSheetPaint() { var el = $('#rp-sheet'); if (el) el.outerHTML = rpSheetStatusHtml(); }
+  // 일일 업무보고 머리 아래 줄: 시트 상태 + [시트에 올리기] (오늘을 볼 때만)
+  function rpSheetTools(d) {
+    if (!rpSheetOn() || d !== today()) return '';
+    return '<div class="rp-sheet-bar">' + rpSheetStatusHtml() +
+      '<button class="btn sm" data-act="rp-sheet-push" title="오늘 이행내용·미진행 과제를 구글 시트의 내 칸(8·9행)에 지금 써요">⇪ 시트에 올리기</button></div>';
   }
 
   /* ---------- 업무보고: 사업별 (사업 → 사람 → 업무) ---------- */
@@ -7548,7 +7665,19 @@ var Logic_ = (function () {
   }
 
   /* ---------- 업무 입력칸 (오른쪽 위 기록칸과 수정 창이 같이 씀) ---------- */
-  function rpFields(r, defDeadline) {
+  // 주간 업무를 완료로 두면 묻는 칸: 일간 이행내용에 넣을까요? (넣기/넣지 않기 + 날짜, 기본 오늘)
+  // 이미 완료된 업무는 지금 값(넣은 날 / 넣지 않음 / 예전 업무는 완료한 날)을 보여 줌
+  function rpDailyFld(r) {
+    var on = !(r && r.status === '완료' && r.dailyDate === 'N');
+    var dd = r && r.status === '완료' && r.dailyDate && r.dailyDate !== 'N' ? r.dailyDate : (r && r.status === '완료' && !r.dailyDate && r.doneDate ? r.doneDate : today());
+    return '<div class="fld rp-daily"' + (r && r.status === '완료' ? '' : ' hidden') + '><span class="lbl">일간 이행내용에 넣을까요? <span class="hint">고른 날의 일일 업무보고에 들어가요 · 기본 오늘</span></span>' +
+      '<div class="rp-daily-row"><div class="seg-group rp-st" role="radiogroup" aria-label="일간에 넣기">' +
+      '<label class="seg-opt"><input type="radio" name="dailyOn" value="Y"' + (on ? ' checked' : '') + '><span>넣기</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="dailyOn" value="N"' + (on ? '' : ' checked') + '><span>넣지 않기</span></label></div>' +
+      '<input type="date" class="inp" name="dailyDate" value="' + esc(dd) + '" max="' + today() + '" aria-label="일간에 넣을 날짜"' + (on ? '' : ' disabled') + '></div></div>';
+  }
+  // daily: 주간 업무 칸 (완료일 때 일간에 넣을지 묻는 칸을 함께 그림)
+  function rpFields(r, defDeadline, daily) {
     // 사업 기본값: 마지막에 고른 사업, 없으면 목록의 첫 사업. ‘기타 (사업 없음)’는 목록 맨 아래
     var projs = rpProjects(), cur = r ? r.project : (S.rp.lastProject || (projs[0] ? projs[0].name : ''));
     var opts = projs.map(function (p) { return [p.name, p.name]; });
@@ -7568,20 +7697,41 @@ var Logic_ = (function () {
       '<div class="fld"><span class="lbl">진행도 <span class="hint">대기 0 · 완료 100</span></span><div class="rp-prog">' +
       '<input type="range" min="0" max="100" step="5" name="progRange" value="' + prog + '" aria-label="진행도"' + dis + '>' +
       '<input type="number" class="inp num" min="0" max="100" name="progress" value="' + prog + '" aria-label="진행도 숫자"' + dis + '><span>%</span>' +
-      '<span class="rp-quick">' + [0, 25, 50, 75, 100].map(function (n) { return '<button type="button" class="btn sm" data-rp-prog="' + n + '"' + dis + '>' + n + '</button>'; }).join('') + '</span></div></div>';
+      '<span class="rp-quick">' + [0, 25, 50, 75, 100].map(function (n) { return '<button type="button" class="btn sm" data-rp-prog="' + n + '"' + dis + '>' + n + '</button>'; }).join('') + '</span></div></div>' +
+      (daily ? rpDailyFld(r) : '');
   }
   function rpCurStatus(form) { var c = form.querySelector('input[name=status]:checked'); return c ? c.value : '진행중'; }
-  // 대기는 0, 완료는 100으로 고정
+  // 이 칸의 업무가 주간인지 (수정 창은 구분 고르기, 추가 칸은 data-kind)
+  function rpFormKind(form) { return form.kind && form.kind.value ? form.kind.value : (form.getAttribute('data-kind') || ''); }
+  // 대기는 0, 완료는 100으로 고정. 주간 업무를 완료로 두면 ‘일간에 넣을까요?’ 칸을 보여 줌
   function rpSyncProg(form) {
     var st = rpCurStatus(form), lock = st === '대기' || st === '완료';
     if (st === '대기') { form.progress.value = 0; form.progRange.value = 0; }
     if (st === '완료') { form.progress.value = 100; form.progRange.value = 100; }
     form.progress.disabled = form.progRange.disabled = lock;
     $$('[data-rp-prog]', form).forEach(function (b) { b.disabled = lock; });
+    var df = form.querySelector('.rp-daily');
+    if (df) {
+      df.hidden = !(st === '완료' && rpFormKind(form) === '주간');
+      var on = form.querySelector('input[name=dailyOn]:checked');
+      form.dailyDate.disabled = !!on && on.value === 'N';
+    }
   }
   function rpPayload(form) {
     var payload = { project: form.project.value, deadline: form.deadline.value, content: form.content.value.trim(), note: form.note.value.trim(), status: rpCurStatus(form), progress: form.progress.value };
     if (!payload.content) { toast('세부내용을 입력해 주세요.', 'error'); form.content.focus(); return null; }
+    // 주간 업무를 완료로 둘 때: 일간에 넣을 날짜 (넣지 않으면 'N')
+    var df = form.querySelector('.rp-daily');
+    if (df && !df.hidden) {
+      var on = form.querySelector('input[name=dailyOn]:checked');
+      if (on && on.value === 'N') payload.dailyDate = 'N';
+      else {
+        var dd = form.dailyDate.value;
+        if (!dd) { toast('일간에 넣을 날짜를 골라 주세요.', 'error'); form.dailyDate.focus(); return null; }
+        if (dd > today()) { toast('일간에 넣을 날짜는 오늘 이후로 고를 수 없어요.', 'error'); form.dailyDate.focus(); return null; }
+        payload.dailyDate = dd;
+      }
+    }
     return payload;
   }
   // 쓰는 중인 내용 기억 (자동 새로고침으로 화면을 다시 그려도 남게)
@@ -7594,7 +7744,7 @@ var Logic_ = (function () {
   function rpFormEvent(e) {
     var f = e.target.closest && e.target.closest('form.rp-form-box');
     if (!f) return;
-    if (e.type === 'change' && e.target.name === 'status') rpSyncProg(f);
+    if (e.type === 'change' && (e.target.name === 'status' || e.target.name === 'dailyOn' || e.target.name === 'kind')) rpSyncProg(f);
     if (e.type === 'input' && e.target.name === 'progRange') f.progress.value = e.target.value;
     if (e.type === 'input' && e.target.name === 'progress') f.progRange.value = e.target.value;
     rpSaveDraft(f);
@@ -7711,7 +7861,8 @@ var Logic_ = (function () {
         return '<button type="button" class="seg-btn' + (mode === t[0] ? ' on' : '') + '" data-act="rp-in" data-mode="' + t[0] + '">' + t[1] + '</button>';
       }).join('') + '</div></div>' +
       (mode === 'paste' ? rpPasteBox(d, kind) :
-        '<form class="form rp-form-box rp-pad" id="rp-form" autocomplete="off" novalidate>' + rpFields(dr ? { project: dr.project, deadline: dl, content: dr.content, note: dr.note, status: dr.status, progress: dr.progress } : null, dl) +
+        '<form class="form rp-form-box rp-pad" id="rp-form" data-kind="' + esc(kind) + '" autocomplete="off" novalidate>' +
+        rpFields(dr ? { project: dr.project, deadline: dl, content: dr.content, note: dr.note, status: dr.status, progress: dr.progress } : null, dl, kind === '주간') +
         '<button type="button" class="btn primary" data-act="rp-add">＋ 추가 (' + esc(rpScopeLabel()) + ' · ' + kind + ')</button></form>') + '</section>';
     // 내 진행현황: 과제별로 묶어서 (과제 순서대로, 과제 안에서는 내가 쓴 것 → 연동 순)
     var g = rpGroup(own.slice().sort(rpByOrder).concat(linked), 'project');
@@ -7724,17 +7875,77 @@ var Logic_ = (function () {
       (hiddenN ? '<span class="spacer"></span><button class="btn sm" data-act="rp-hidden-list" title="업무보고에서만 지운 연동 업무 (다시 넣을 수 있어요)">지운 연동 ' + hiddenN + '건</button>' : '') + '</div>' +
       '<div class="rp-pad rp-cards">' + (cards || '<div class="empty"><strong>아직 기록한 업무가 없어요</strong>왼쪽에서 업무를 추가하세요.</div>') + '</div></section>';
     var right = kind === '일간'
-      ? '<section class="panel rp-col"><div class="panel-head"><h2>일일 업무보고</h2><span class="spacer"></span><button class="btn sm primary" data-act="rp-copy" data-who="me">⧉ 이행내용 복사</button></div>' +
+      ? '<section class="panel rp-col"><div class="panel-head rp-daily-head"><h2>일일 업무보고</h2><span class="spacer"></span>' +
+        '<button class="btn sm primary" data-act="rp-copy" data-who="me">⧉ 이행내용 복사</button></div>' + rpSheetTools(d) +
         '<div class="rp-pad">' + rpNarrative(me, d, false) + '</div></section>'
-      : '<section class="panel rp-col"><div class="panel-head"><h2>주간 진행현황</h2></div>' + rpTable(own.map(function (r) { return r; }), 'project', false) + '</section>';
+      : '<section class="panel rp-col"><div class="panel-head"><h2>주간 진행현황</h2><span class="spacer"></span>' +
+        // 여러 건 한 번에 완료 (일간에 넣을 항목·날짜를 고름)
+        (own.some(function (r) { return r.status !== '완료'; }) ? '<button class="btn sm" data-act="rp-week-done" title="이번 주 안 끝난 업무를 골라 한 번에 완료로 바꿔요. 일간 이행내용에 넣을 항목과 날짜도 골라요">완료 처리</button>' : '') +
+        '</div>' + rpTable(own.map(function (r) { return r; }), 'project', false) + '</section>';
     return (kind === '주간' ? rpCarryBox(me, d) : '') + '<div class="rp-grid">' + formBox + listBox + right + '</div>';
+  }
+  // 완료한 주간 업무: 어느 날 일간 이행내용에 들어갔는지 (넣지 않았으면 그렇게)
+  function rpDailyTag(t) {
+    if (t.linked || t.team === 'Y' || t.kind !== '주간' || t.status !== '완료') return '';
+    var on = rpWeeklyDailyOn(t);
+    return t.dailyDate === 'N' ? ' <span class="rp-daily-tag off" title="일간 이행내용에 넣지 않았어요">일간 안 넣음</span>'
+      : on ? ' <span class="rp-daily-tag" title="이 날의 일일 업무보고에 들어가요">일간 ' + esc(rpMD(on)) + '</span>' : '';
+  }
+  // 주간 업무 여러 건을 한 번에 완료: 줄마다 완료로 바꿀지 · 일간에 넣을지 · 넣을 날짜(기본 오늘)를 고름
+  // ids가 없으면 보고 있는 주의 안 끝난 내 주간 업무, 있으면 그 업무 (지난 4주 안 끝난 업무에서 고른 것)
+  function openWeekDone(ids) {
+    var me = S.user.name, list = ids
+      ? (S.data.reports || []).filter(function (r) { return ids.indexOf(r.id) >= 0; })
+      : rpOwn(me, '주간', rpDay()).filter(function (r) { return r.status !== '완료'; }).sort(rpByOrder);
+    if (!list.length) { toast('완료로 바꿀 업무가 없어요.', 'error'); return; }
+    var t0 = today();
+    var m = openModal({
+      title: '주간 업무 완료 처리', size: 'wide',
+      body: '<p class="hint" style="margin-top:0">완료로 바꿀 업무를 체크하고, 일일 업무보고(이행내용)에 넣을 날짜를 고르세요. 날짜는 오늘로 들어가 있고 바꿀 수 있어요. 넣지 않을 업무는 ‘일간에 넣기’를 풀어 두세요.</p>' +
+        '<div class="tbl-wrap" style="max-height:none"><table class="tbl rp-done-tbl"><thead><tr><th>완료</th><th>업무</th><th>지금</th><th>일간에 넣기</th><th>날짜</th></tr></thead><tbody>' +
+        list.map(function (r) {
+          return '<tr data-wd="' + esc(r.id) + '"><td><input type="checkbox" class="wd-pick" checked aria-label="완료로 바꾸기"></td>' +
+            '<td class="wrap"><b>' + esc(r.project || '기타') + '</b> ' + esc(r.content) + (ids ? ' <span class="hint">' + esc(rpMD(r.date)) + ' 주</span>' : '') + '</td>' +
+            '<td class="nowrap">' + rpChip(r.status) + ' ' + rpProgCell(r) + '</td>' +
+            '<td><label class="check"><input type="checkbox" class="wd-daily" checked> 넣기</label></td>' +
+            '<td><input type="date" class="inp wd-date" value="' + t0 + '" max="' + t0 + '" aria-label="일간에 넣을 날짜"></td></tr>';
+        }).join('') + '</tbody></table></div>',
+      footer: '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="wd-go">완료 처리</button>'
+    });
+    // 완료를 풀면 그 줄의 일간 칸도 쓸 수 없게, 일간을 풀면 날짜도
+    function sync(tr) {
+      var pick = $('.wd-pick', tr).checked, daily = $('.wd-daily', tr);
+      daily.disabled = !pick; $('.wd-date', tr).disabled = !pick || !daily.checked;
+    }
+    m.addEventListener('change', function (e) { var tr = e.target.closest && e.target.closest('tr[data-wd]'); if (tr) sync(tr); });
+    var going = false, btn = $('#wd-go', m);
+    btn.addEventListener('click', function () {
+      if (going) return;
+      var picked = [], daily = {}, bad = null;
+      $$('tr[data-wd]', m).forEach(function (tr) {
+        if (!$('.wd-pick', tr).checked) return;
+        var id = tr.getAttribute('data-wd'), dd = $('.wd-date', tr).value;
+        picked.push(id);
+        if (!$('.wd-daily', tr).checked) { daily[id] = 'N'; return; }
+        if (!dd || dd > t0) bad = bad || $('.wd-date', tr);
+        daily[id] = dd;
+      });
+      if (!picked.length) { toast('완료로 바꿀 업무를 체크해 주세요.', 'error'); return; }
+      if (bad) { toast('일간에 넣을 날짜를 오늘이나 그 전으로 골라 주세요.', 'error'); bad.focus(); return; }
+      going = true; btn.disabled = true;
+      call('setReportsStatus', { ids: picked, status: '완료', daily: daily }).then(function (res) {
+        closeModal(); applyState(res);
+        var n = picked.filter(function (id) { return daily[id] !== 'N'; }).length;
+        toast(picked.length + '건을 완료로 바꿨어요' + (n ? ' · 일간에 ' + n + '건 넣었어요' : '') + '.');
+      }, function () { going = false; btn.disabled = false; });
+    });
   }
   // inGroup: 과제 묶음 안의 카드 (과제 이름은 묶음 제목에 있으니 빼고)
   function rpCard(t, inGroup) {
     var edit = rpCanEdit(t);
     return '<div class="rp-card' + (t.linked ? ' linked' : '') + (edit ? ' clickable' : '') + '"' + (edit ? rpEditAttr(t) : '') + '>' +
       '<div class="rp-card-h">' + (inGroup ? '' : '<b>' + esc(t.project || '기타') + '</b>') + rpChip(t.status) +
-      (t.linked ? rpLinkTag(t) : '') + rpCarryTag(t) +
+      (t.linked ? rpLinkTag(t) : '') + rpCarryTag(t) + rpDailyTag(t) +
       '<span class="spacer"></span>' + (t.deadline ? '<span class="rp-dl">마감 ' + rpDeadline(t) + '</span>' : '') + '</div>' +
       '<div class="rp-card-b">' + esc(t.content) + (t.note ? '<div class="rp-nt">' + esc(t.note) + '</div>' : '') + '</div>' +
       '<div class="rp-card-f">' + rpProgCell(t) + '</div></div>';
@@ -7776,7 +7987,7 @@ var Logic_ = (function () {
             '<div class="fld"><span class="lbl">구분</span><div class="ml-status-now"><span class="tag rp-week-tag">주간</span></div><input type="hidden" name="kind" value="주간"></div></div>'
           : '<div class="form-grid"><label class="fld"><span class="lbl">구분</span><select class="inp" name="kind">' + options(L.REPORT_KINDS, r.kind) + '</select></label>' +
             '<label class="fld"><span class="lbl">날짜 <span class="hint">주간은 그 주 월요일로 저장</span></span><input type="date" class="inp" name="date" value="' + esc(r.date) + '"></label></div>') +
-        rpFields(r) + (team ? rpHistoryBlock(rpTeamLogs(r.id)) : '') + '</form>',
+        rpFields(r, undefined, !team) + (team ? rpHistoryBlock(rpTeamLogs(r.id)) : '') + '</form>',
       // 삭제: 쓴 사람과 PI·PEO·PM만
       footer: (rpCanDelete(r) ? '<span class="left"><button class="btn danger-line" data-act="rp-del" data-id="' + esc(r.id) + '">삭제</button></span>' : '') +
         (team ? '<button class="btn" data-act="rp-step" data-id="' + esc(r.id) + '">+ 다음 단계</button>' : '') +
@@ -8018,8 +8229,11 @@ var Logic_ = (function () {
     'rp-carry-set': function (el) {
       var ids = rpCarryPicked(), st = el.getAttribute('data-status');
       if (!ids.length) { toast('업무를 체크해 주세요.', 'error'); return; }
+      if (st === '완료') { openWeekDone(ids); return; } // 완료는 일간에 넣을 항목·날짜를 고르는 창으로
       call('setReportsStatus', { ids: ids, status: st }).then(function (res) { applyState(res); toast(ids.length + '건을 ' + st + ' 처리했어요.'); }, noop);
     },
+    'rp-week-done': function () { openWeekDone(null); },
+    'rp-sheet-push': function () { RP_SHEET.off = ''; rpSheetPush(true); }, // 직접 올리면 자동도 다시 켬
     'rp-kind': function (el) {
       S.rp.kind = el.getAttribute('data-kind');
       if (S.rp.draft) S.rp.draft.dlSet = false; // 일간↔주간을 바꾸면 마감일은 다시 기본값(그날 / 그 주 금요일)
