@@ -462,6 +462,7 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .rp-pgroup-h .count { margin-left: 0; }
 .rp-card { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
 .rp-card.linked { border-left-color: var(--k-meet); background: var(--surface-2); }
+.rp-card.from-week { border-left-color: var(--accent-strong); border-left-style: double; border-left-width: 5px; } /* 주간 업무를 완료하며 일간에 넣은 것 */
 .rp-card.clickable { cursor: pointer; }
 .rp-card.clickable:hover { background: var(--accent-wash); }
 .rp-card-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
@@ -7327,6 +7328,12 @@ var Logic_ = (function () {
   // 일일 업무보고에 들어가는 것: 그날 일간 업무 + 그날 일간에 넣은 완료 주간 업무 + 연동
   // 주간 업무: 완료할 때 고른 ‘일간에 넣을 날짜’(dailyDate) 기준. ‘N’이면 넣지 않음. 예전 업무(비어 있음)는 완료한 날(doneDate)
   function rpWeeklyDailyOn(r) { return r.status === '완료' ? (r.dailyDate || r.doneDate || '') : ''; }
+  // 일간 내 진행현황에 카드로 보일 ‘주간에서 넘어온’ 업무 (원래 업무를 바꾸지 않게 복사본에 표시만 붙임)
+  function rpWeeklyInDaily(name, d) {
+    return (S.data.reports || []).filter(function (r) {
+      return !r.linkKey && r.team !== 'Y' && r.author === name && r.kind === '주간' && rpWeeklyDailyOn(r) === d;
+    }).sort(rpByOrder).map(function (r) { var o = {}; Object.keys(r).forEach(function (k) { o[k] = r[k]; }); o.viaWeekly = d; return o; });
+  }
   function rpDailyItems(name, d) {
     var mine = (S.data.reports || []).filter(function (r) {
       return !r.linkKey && r.team !== 'Y' && r.author === name && ((r.kind === '일간' && r.date === d) || (r.kind === '주간' && rpWeeklyDailyOn(r) === d));
@@ -7856,6 +7863,8 @@ var Logic_ = (function () {
     var me = S.user.name;
     var all = kind === '일간' ? rpLinkedAll(me, d) : [];
     var own = rpOwn(me, kind, d), linked = all.filter(function (t) { return !t.hidden; }), hiddenN = all.length - linked.length;
+    // 일간: 주간 업무를 완료하며 이 날 일간에 넣은 것도 카드로 (눌러서 고치기, ×는 이 날 일간에서만 빼기)
+    var fromWeek = kind === '일간' ? rpWeeklyInDaily(me, d) : [];
     var dr = S.rp.draft || null;
     // 마감일 기본값: 일간은 그날(보통 오늘), 주간은 그 주 금요일. 직접 고치면 고친 값 유지
     var dl = dr && dr.dlSet ? dr.deadline : (kind === '일간' ? d : rpWeekEnd(d));
@@ -7869,13 +7878,14 @@ var Logic_ = (function () {
         '<form class="form rp-form-box rp-pad" id="rp-form" data-kind="' + esc(kind) + '" autocomplete="off" novalidate>' +
         rpFields(dr ? { project: dr.project, deadline: dl, content: dr.content, note: dr.note, status: dr.status, progress: dr.progress } : null, dl, kind === '주간') +
         '<button type="button" class="btn primary" data-act="rp-add">＋ 추가 (' + esc(rpScopeLabel()) + ' · ' + kind + ')</button></form>') + '</section>';
-    // 내 진행현황: 과제별로 묶어서 (과제 순서대로, 과제 안에서는 내가 쓴 것 → 연동 순)
-    var g = rpGroup(own.slice().sort(rpByOrder).concat(linked), 'project');
+    // 내 진행현황: 과제별로 묶어서 (과제 순서대로, 과제 안에서는 내가 쓴 것 → 주간에서 넘어온 것 → 연동 순)
+    var g = rpGroup(own.slice().sort(rpByOrder).concat(fromWeek, linked), 'project');
     var cards = g.order.map(function (pn) {
       return '<div class="rp-pgroup"><div class="rp-pgroup-h"><b>' + esc(pn) + '</b><span class="count">' + g.by[pn].length + '건</span></div>' +
         g.by[pn].map(function (t) { return rpCard(t, true); }).join('') + '</div>';
     }).join('');
-    var listBox = '<section class="panel rp-col"><div class="panel-head"><h2>내 진행현황</h2><span class="count">' + (own.length + linked.length) + '건</span>' +
+    var listBox = '<section class="panel rp-col"><div class="panel-head"><h2>내 진행현황</h2><span class="count">' + (own.length + fromWeek.length + linked.length) + '건</span>' +
+      (fromWeek.length ? '<span class="rp-daily-tag" title="주간 업무를 완료하면서 이 날 일간에 넣은 업무">주간 완료 ' + fromWeek.length + '건</span>' : '') +
       (linked.length ? '<span class="rp-link" title="유지보수 진행사항·사업 진행사항에서 이 날 쓴 기록이 자동으로 들어와요">연동 ' + linked.length + '건</span>' : '') +
       (hiddenN ? '<span class="spacer"></span><button class="btn sm" data-act="rp-hidden-list" title="업무보고에서만 지운 연동 업무 (다시 넣을 수 있어요)">지운 연동 ' + hiddenN + '건</button>' : '') + '</div>' +
       '<div class="rp-pad rp-cards">' + (cards || '<div class="empty"><strong>아직 기록한 업무가 없어요</strong>왼쪽에서 업무를 추가하세요.</div>') + '</div></section>';
@@ -7948,6 +7958,10 @@ var Logic_ = (function () {
   // 카드 오른쪽 위 × : 내가 쓴 업무는 삭제, 연동(유지보수·사업 기록) 업무는 업무보고에서만 빼기 (원래 기록은 그대로)
   // 누르면 확인 창이 뜨고, 카드를 눌러 여는 수정 창의 삭제와 같음
   function rpCardDel(t) {
+    // 주간에서 넘어온 카드: 주간 업무는 그대로 두고 이 날 일간 이행내용에서만 뺌
+    if (t.viaWeekly) {
+      return rpCanEdit(t) ? '<button type="button" class="rp-card-x" data-act="rp-daily-out" data-id="' + esc(t.id) + '" aria-label="일간에서 빼기" title="이 날 일간 이행내용에서만 빼요 (주간 업무는 완료 그대로)">×</button>' : '';
+    }
     if (t.linked) {
       return rpCanEdit(t) ? '<button type="button" class="rp-card-x" data-act="rp-link-hide" data-key="' + esc(t.linkKey) + '" aria-label="업무보고에서 삭제" title="업무보고에서만 지워요 (원래 ' + esc(t.linked) + ' 기록은 그대로)">×</button>' : '';
     }
@@ -7956,9 +7970,10 @@ var Logic_ = (function () {
   // inGroup: 과제 묶음 안의 카드 (과제 이름은 묶음 제목에 있으니 빼고)
   function rpCard(t, inGroup) {
     var edit = rpCanEdit(t), del = rpCardDel(t);
-    return '<div class="rp-card' + (t.linked ? ' linked' : '') + (edit ? ' clickable' : '') + (del ? ' has-x' : '') + '"' + (edit ? rpEditAttr(t) : '') + '>' + del +
+    return '<div class="rp-card' + (t.linked ? ' linked' : '') + (t.viaWeekly ? ' from-week' : '') + (edit ? ' clickable' : '') + (del ? ' has-x' : '') + '"' + (edit ? rpEditAttr(t) : '') + '>' + del +
       '<div class="rp-card-h">' + (inGroup ? '' : '<b>' + esc(t.project || '기타') + '</b>') + rpChip(t.status) +
-      (t.linked ? rpLinkTag(t) : '') + rpCarryTag(t) + rpDailyTag(t) +
+      (t.linked ? rpLinkTag(t) : '') + rpCarryTag(t) +
+      (t.viaWeekly ? '<span class="rp-daily-tag" title="주간 업무를 완료하면서 이 날 일간에 넣은 업무예요. 눌러서 날짜를 바꾸거나 뺄 수 있어요">주간 업무</span>' : rpDailyTag(t)) +
       '<span class="spacer"></span>' + (t.deadline ? '<span class="rp-dl">마감 ' + rpDeadline(t) + '</span>' : '') + '</div>' +
       '<div class="rp-card-b">' + esc(t.content) + (t.note ? '<div class="rp-nt">' + esc(t.note) + '</div>' : '') + '</div>' +
       '<div class="rp-card-f">' + rpProgCell(t) + '</div></div>';
@@ -8246,6 +8261,18 @@ var Logic_ = (function () {
       call('setReportsStatus', { ids: ids, status: st }).then(function (res) { applyState(res); toast(ids.length + '건을 ' + st + ' 처리했어요.'); }, noop);
     },
     'rp-week-done': function () { openWeekDone(null); },
+    // 주간에서 넘어온 카드의 ×: 이 날 일간에서만 빼기 (주간 업무는 완료 그대로, 주간 카드를 눌러 다시 넣을 수 있음)
+    'rp-daily-out': function (el) {
+      var id = el.getAttribute('data-id'), r = (S.data.reports || []).filter(function (x) { return x.id === id; })[0];
+      if (!r) return;
+      var on = rpWeeklyDailyOn(r);
+      confirmBox('<b>' + esc(r.content) + '</b><br>이 주간 업무를 <b>' + esc(rpMD(on)) + ' 일간 이행내용에서</b> 뺄까요?<br>' +
+        '<span class="hint">주간 업무는 완료 그대로 남아요. 주간 업무 카드를 눌러 다시 넣을 수 있어요.</span>', '일간에서 빼기', true).then(function (ok) {
+        if (!ok) return;
+        call('saveReport', { id: r.id, kind: r.kind, date: r.date, project: r.project, deadline: r.deadline, content: r.content, note: r.note,
+          status: r.status, progress: r.progress, dailyDate: 'N' }).then(function (res) { applyState(res); toast('일간에서 뺐어요. 주간 업무는 완료 그대로예요.'); }, noop);
+      });
+    },
     'rp-sheet-push': function () { RP_SHEET.off = ''; rpSheetPush(true); }, // 직접 올리면 자동도 다시 켬
     'rp-kind': function (el) {
       S.rp.kind = el.getAttribute('data-kind');
