@@ -203,6 +203,7 @@ select.inp { padding-right: 28px; }
 /* 데모 안내 */
 .demo-bar { background: var(--warn-wash); color: var(--warn-ink); font-size: 14px; padding: 8px 16px; text-align: center; }
 .demo-bar .link { color: var(--warn-ink); margin-left: 8px; }
+.ver-bar { background: var(--danger-wash, var(--warn-wash)); color: var(--danger, var(--warn-ink)); font-weight: 600; }
 
 /* 상단 바 */
 .topbar {
@@ -409,6 +410,17 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .ml-status-now { min-height: 36px; display: flex; align-items: center; }
 .ml-step-now { margin: 0 0 4px; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
 .ml-tbl td.sticky-act .btn { white-space: nowrap; }
+
+/* 유지보수 > 이력 (PEO 전용, 월간보고용): 제목 옆 작은 캡슐, 엑셀 양식과 같은 두 줄 머리글, 사업 이름 줄로 묶음 */
+.title-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 10px; margin-left: 8px; border-radius: 999px; background: var(--accent-wash); color: var(--accent-strong); border: 1px solid var(--accent); font-size: 12px; font-weight: 700; vertical-align: middle; letter-spacing: 0; }
+.mh-tbl th.ml-grp { background: var(--surface-3); color: var(--ink); text-align: center; }
+.mh-tbl td { vertical-align: top; }
+.mh-tbl td.mh-content { min-width: 240px; max-width: 420px; font-weight: 600; }
+.mh-tbl td.mh-result { min-width: 220px; max-width: 420px; color: var(--ink-2); }
+.mh-tbl tr.mh-grp td { background: var(--surface-2); font-weight: 700; border-top: 2px solid var(--line-strong); }
+.mh-tbl .mh-grp-name { font-size: 15px; color: var(--ink); }
+.st.mh-cat { min-width: 52px; justify-content: center; }
+.biz-mview { margin-left: 4px; }
 
 /* 켜고 끄는 버튼 묶음 (일간/주간, 보고서/표 등) */
 .seg-btn { height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-2); font-weight: 600; cursor: pointer; }
@@ -910,6 +922,7 @@ var Logic_ = (function () {
   var STAGE_RANK = { '비기능': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5 };
   var NEW_RECEIPT_STAGES = ['1', '비기능']; // 새 접수번호를 만들 수 있는 단계
   var STATUSES = ['진행중', '완료', '대기', '보류'];
+  var MH_CATEGORIES = ['시스템', '일반']; // 유지보수 이력의 구분
 
   /* ---------- 역할·소속 ----------
    * PI: 최고 관리자(전부 보고, 모든 계정 관리)
@@ -935,6 +948,9 @@ var Logic_ = (function () {
   }
 
   /* ---------- 과제(사업) ---------- */
+  // 서버 코드 지문: build.ps1이 서버 쪽 코드(logic·supa-core·서버 입구)로 만든 값을 넣음. 화면 파일과 서버에 같은 값이 들어감
+  // 서버가 돌려준 값이 화면과 다르면(서버를 다시 Deploy하지 않음) 화면이 PI·PM에게 알려 줌
+  var SERVER_BUILD = 'eb93b06acb7f';
   var KINDS = ['연구', '유지보수']; // 화면에서는 '연구' → ‘연구사업’으로 보여 줌
   var RESEARCH_TYPES = ['연구용역', '일반용역', '출연과제', '정책연구']; // 연구사업 종류
   function kindOf(p) { return p && p.kind === '연구' ? '연구' : '유지보수'; }
@@ -1031,6 +1047,14 @@ var Logic_ = (function () {
       sheet: '안건비고', key: 'id',
       cols: [['id', 'ID'], ['project', '과제'], ['receiptNo', '접수번호'], ['date', '날짜'], ['content', '내용'],
         ['author', '작성자'], ['updatedAt', '수정일시']]
+    },
+    // 유지보수 이력 (PEO 전용, 월간보고용 장부): 유지보수 진행사항과 따로 PEO가 직접 적음. PMO에는 보내지 않음
+    maintHistory: {
+      sheet: '유지보수이력', key: 'id',
+      cols: [['id', 'ID'], ['project', '사업'], ['category', '구분'], ['requester', '요청자'], ['requestDate', '요청일'],
+        ['content', '세부 내용'], ['result', '특이사항(처리내용)'], ['status', '작업 진행 상황'], ['dueDate', '작업 기한(완료일)'],
+        ['researcher', '담당 연구원'], ['developer', '담당 개발자'], ['designer', '담당 디자인'],
+        ['author', '작성자'], ['createdAt', '작성일시'], ['updatedAt', '수정일시'], ['updatedBy', '수정자']]
     },
     // 업무보고 (PEO): 일간은 그날, 주간은 그 주 월요일 날짜
     reports: {
@@ -1397,6 +1421,7 @@ var Logic_ = (function () {
         logs: pick('logs', mineSet),
         milestones: pick('milestones', mineSet),
         caseNotes: pick('caseNotes', maintSet), // PEO만 받음
+        maintHistory: pick('maintHistory', maintSet), // 유지보수 이력: PEO만 받음 (볼 수 있는 유지보수 과제만)
         // 업무보고: PEO만. PI·PEO·PM은 전원 것(전체 현황), 연구자는 본인 것만
         // 팀 업무(team = 'Y', PI·PEO·PM이 씀)는 PEO 모두에게. 내 업무(일간·주간)는 본인·PI·PEO·PM만
         reports: biz ? store.list('reports').filter(function (r) { return isPM || r.author === u.name || sharedReport(r); }).map(function (r) { return clean('reports', r); }) : [],
@@ -1413,7 +1438,8 @@ var Logic_ = (function () {
         mailLogs: canSeeMail(u) ? store.list('mailLogs').map(function (x) { return clean('mailLogs', x); }) : [],
         // 메일의 사업명 고르기: 연구사업(전체 과제) 중 기간이 지나지 않은 것 (종료일이 없으면 포함)
         mailProjects: canSeeMail(u) ? activeProjects(projects).map(function (p) { return { name: p.name, kind: kindOf(p), no: str(p.no) }; }) : [],
-        settings: settingsOf() // 모든 사람 공통 설정
+        settings: settingsOf(), // 모든 사람 공통 설정
+        serverBuild: SERVER_BUILD // 서버 코드 지문 (화면 파일과 같은 빌드인지 확인)
       };
     }
 
@@ -1554,7 +1580,7 @@ var Logic_ = (function () {
         return true;
       });
     }
-    var LINKED = ['records', 'years', 'plan', 'tasks', 'logs', 'milestones', 'caseNotes'];
+    var LINKED = ['records', 'years', 'plan', 'tasks', 'logs', 'milestones', 'caseNotes', 'maintHistory'];
     function linkedCount(name, tables) {
       var n = 0;
       (tables || LINKED).forEach(function (t) { n += store.list(t).filter(function (x) { return x.project === name; }).length; });
@@ -1602,7 +1628,7 @@ var Logic_ = (function () {
           // 구분(연구사업 ↔ 유지보수)은 기록이 있어도 바꿀 수 있음. 기록은 지우지 않음
           store.update('projects', orig, fields);
           if (name !== orig) {
-            ['records', 'years', 'plan', 'tasks', 'logs', 'milestones', 'caseNotes', 'reports', 'outcomes'].forEach(function (t) {
+            ['records', 'years', 'plan', 'tasks', 'logs', 'milestones', 'caseNotes', 'maintHistory', 'reports', 'outcomes'].forEach(function (t) {
               var moved = store.list(t).filter(function (x) { return x.project === orig; })
                 .map(function (x) { return { id: x.id, project: name }; });
               if (moved.length) store.updateMany(t, moved);
@@ -1626,7 +1652,7 @@ var Logic_ = (function () {
         var cur = findProject(store.list('projects'), name);
         if (!cur) fail('이미 삭제된 과제예요.');
         if (!canManageProject(u, kindOf(cur))) fail('PMO·PM은 유지보수 과제만 관리할 수 있어요.');
-        if (linkedCount(name, ['records', 'plan', 'tasks', 'logs', 'caseNotes', 'outcomes'])) fail('기록·작업·RFP 항목·성과가 있는 과제는 삭제할 수 없어요.');
+        if (linkedCount(name, ['records', 'plan', 'tasks', 'logs', 'caseNotes', 'outcomes', 'maintHistory'])) fail('기록·작업·RFP 항목·성과·유지보수 이력이 있는 과제는 삭제할 수 없어요.');
         store.remove('projects', name);
         ['closures', 'years', 'milestones'].forEach(function (t) {
           var ids = store.list(t).filter(function (x) { return x.project === name; }).map(function (x) { return x.id; });
@@ -2831,6 +2857,45 @@ var Logic_ = (function () {
       });
     }
 
+    /* --- 유지보수 이력 (PEO 전용 장부, 월간보고용) ---
+     * 쓰기·고치기·지우기: PI, PEO·PM(모든 유지보수 과제), PEO·연구자(배정된 과제). PMO는 데이터도 받지 않음 */
+    function saveMaintHistory(u, p) {
+      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      return store.withLock(function () {
+        var cur = str(p.id) ? store.list('maintHistory').filter(function (x) { return x.id === str(p.id); })[0] : null;
+        if (str(p.id) && !cur) fail('이력을 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.');
+        if (cur) requireMaint(u, cur.project); // 원래 사업도 내가 볼 수 있는 과제여야 고침
+        var proj = requireMaint(u, str(p.project) || (cur ? cur.project : ''));
+        var category = str(p.category);
+        if (MH_CATEGORIES.indexOf(category) < 0) fail('구분(시스템·일반)을 골라 주세요.');
+        var requestDate = cleanDate(p.requestDate);
+        if (!requestDate) fail('요청일을 입력해 주세요.');
+        var status = str(p.status);
+        if (STATUSES.indexOf(status) < 0) fail('작업 진행 상황을 골라 주세요.');
+        var obj = {
+          project: proj.name, category: category, requester: validateText(p.requester, '요청자', 50, true), requestDate: requestDate,
+          content: validateText(p.content, '세부 내용', 1000, true), result: validateText(p.result, '특이사항(처리내용)', 2000, false),
+          status: status, dueDate: cleanDate(p.dueDate),
+          researcher: validateText(p.researcher, '담당 연구원', 100, false), developer: validateText(p.developer, '담당 개발자', 100, false),
+          designer: validateText(p.designer, '담당 디자인', 100, false),
+          updatedAt: env.now(), updatedBy: u.name
+        };
+        if (cur) store.update('maintHistory', cur.id, obj);
+        else { obj.id = env.uuid(); obj.author = u.name; obj.createdAt = obj.updatedAt; store.append('maintHistory', [obj]); }
+        return { state: loadFor(u), info: { id: cur ? cur.id : obj.id } };
+      });
+    }
+    function deleteMaintHistory(u, p) {
+      if (!seesBiz(u)) fail('PEO만 쓸 수 있어요.');
+      return store.withLock(function () {
+        var cur = store.list('maintHistory').filter(function (x) { return x.id === str(p.id); })[0];
+        if (!cur) fail('이미 삭제된 이력이에요.');
+        requireMaint(u, cur.project);
+        store.remove('maintHistory', cur.id);
+        return { state: loadFor(u) };
+      });
+    }
+
     function handle(req) {
       req = req || {};
       var p = req.payload || {};
@@ -2897,6 +2962,8 @@ var Logic_ = (function () {
         case 'deleteMilestone': return deleteMilestone(u, p);
         case 'saveCaseNote': return saveCaseNote(u, p);
         case 'deleteCaseNote': return deleteCaseNote(u, p);
+        case 'saveMaintHistory': return saveMaintHistory(u, p);
+        case 'deleteMaintHistory': return deleteMaintHistory(u, p);
         case 'importBiz': return importBiz(u, p);
         case 'clearImportedBiz': return clearImportedBiz(u);
         case 'exportAll': return exportAll(u);
@@ -2957,6 +3024,8 @@ var Logic_ = (function () {
     MAIL_DBDEV: MAIL_DBDEV,
     MAIL_TYPES: MAIL_TYPES,
     MAIL_STATUSES: MAIL_STATUSES,
+    MH_CATEGORIES: MH_CATEGORIES,
+    SERVER_BUILD: SERVER_BUILD,
     canSeeMail: canSeeMail,
     TABLES: TABLES
   };
@@ -3211,6 +3280,18 @@ var Logic_ = (function () {
         memory.caseNotes = [{ id: env.uuid(), project: 'mFCDB', receiptNo: sample.receiptNo, date: ago(4),
           content: '식약처 담당자와 통화: 템플릿 삭제 시 확인창 문구도 함께 수정 요청 → 다음 배포에 포함하기로 함', author: '위세희', updatedAt: env.now() }];
       }
+      // 유지보수 > 이력 샘플 (PEO 전용 월간보고용 장부): [사업, 구분, 요청자, 요청일(며칠 전), 세부 내용, 처리내용, 진행 상황, 기한·완료일(며칠 전), 연구원, 개발자, 디자인]
+      memory.maintHistory = [
+        ['mFCDB', '시스템', '김남숙 주무관', 40, '[로그분석] 정보활용현황 기능 추가', '로그 집계 화면 추가 및 엑셀 다운로드 반영', '완료', 25, '이주영', '김하림', '-'],
+        ['mFCDB', '일반', '김채은 실무관', 33, '원격지 개발 유지보수 보안강화 점검 및 조치 결과 작성 요청', '점검표 작성 및 조치 결과 송부', '완료', 32, '위세희', '', '-'],
+        ['mFCDB', '시스템', '김남숙 주무관', 26, '[식품으로 찾아보기] 가공식품, 건기식 탭 추가 요청', '탭 구성안 협의 후 개발 진행', '진행중', -5, '이주영', '김하림', '김혜민'],
+        ['mFCDB', '일반', '김한나', 6, '9월 DB 반영분 검수 일정 공유', '', '대기', -3, '위세희', '', '-'],
+        ['mKIND', '시스템', '나태웅 주무관', 9, '[개인정보 관리] 접속기록 보관 기능 보완', '보관 기간 설정 기능 반영', '완료', 2, '이주영', '김하림', '-'],
+        ['mKIND', '일반', '나태웅 주무관', 3, '(10월) 정보시스템 예방·점검 결과 제출', '점검 결과 보고서 송부', '완료', 2, '이주영', '', '-']
+      ].map(function (r) {
+        return { id: env.uuid(), project: r[0], category: r[1], requester: r[2], requestDate: ago(r[3]), content: r[4], result: r[5], status: r[6],
+          dueDate: ago(r[7]), researcher: r[8], developer: r[9], designer: r[10], author: r[8], createdAt: env.now(), updatedAt: env.now(), updatedBy: r[8] };
+      });
       // 업무보고 > 팀 업무 샘플 (PI·PEO·PM이 쓰고 PEO 모두가 봄): 이번 주
       var wk = L.mondayOf(today), fri = (function () { var t = new Date(wk + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + 4); return t.toISOString().slice(0, 10); })();
       memory.reports = (memory.reports || []).concat([
@@ -3326,7 +3407,8 @@ var Logic_ = (function () {
     adminTab: 'projects',
     overTab: '',                         // 전체 진행현황 세부 탭
     pv: { year: '' },                    // 연간 계획표 연도
-    bz: { project: '', yearNo: '', code: '', status: '', q: '', hideDone: prefs.bzHideDone !== false },   // 사업 진행사항: 과제·연차·업무번호·상태·검색·종결 숨기기
+    // 사업 진행사항: 과제·연차·업무번호·상태·검색·종결 숨기기, 유지보수 과제 보기(진행 단계 stage / 이력 history)
+    bz: { project: '', yearNo: '', code: '', status: '', q: '', hideDone: prefs.bzHideDone !== false, mview: prefs.bzMview === 'history' ? 'history' : 'stage' },
     bzOpen: {},                          // 사업 진행사항에서 펼친 줄 (작업 't:id', 유지보수 안건 'c:과제|접수번호')
     bzFocus: '',                         // 이력 창에서 바로 온 안건 (필터와 상관없이 보여줌)
     rfView: '',                          // RFP 관리: 'all'(전체 현황, PI·PM 기본) / 'project'(과제별)
@@ -3342,6 +3424,8 @@ var Logic_ = (function () {
     // 메일 송부 현황: 연도, 진행상황, 유형, 구분, DB/개발, 검색, 완료 숨기기
     ml: { year: '', status: '', type: '', urgency: '', dbDev: '', q: '', hideDone: false },
     mlStack: {}, // 메일 송부 현황에서 이전 진행 기록을 펼친 메일 (id)
+    // 유지보수 > 이력 (PEO 전용): 사업, 연도, 월, 구분, 작업 진행 상황, 검색, 완료 숨기기
+    mh: { project: '', year: '', month: '', category: '', status: '', q: '', hideDone: false },
     rf: { project: '', yearNo: '' },             // RFP 관리: 과제·연차
     f: { project: '', stage: '', status: '', q: '', mine: false, grouped: prefs.grouped !== false, hideDone: prefs.hideDone !== false },
     expanded: {}, // 모아보기에서 펼친 안건 (사업|접수번호)
@@ -3459,7 +3543,7 @@ var Logic_ = (function () {
     return '-';
   }
   function owners(r) { return esc(L.splitNames(r.owners).join(', ')) || '-'; }
-  function savePrefs() { storageSet(PREF_KEY, { hide: S.sf.hide, days: S.sf.days, grouped: S.f.grouped, hideDone: S.f.hideDone, bzHideDone: S.bz.hideDone }); }
+  function savePrefs() { storageSet(PREF_KEY, { hide: S.sf.hide, days: S.sf.days, grouped: S.f.grouped, hideDone: S.f.hideDone, bzHideDone: S.bz.hideDone, bzMview: S.bz.mview }); }
   // 유지보수 화면은 유지보수 과제만
   function maintProjects() { return S.data.projects.filter(function (p) { return p.kind !== '연구'; }); }
   function researchProjects() { return S.data.projects.filter(function (p) { return p.kind === '연구'; }); }
@@ -3842,7 +3926,8 @@ var Logic_ = (function () {
       { id: 'overview', label: '전체 진행현황', tabs: [['overview', '전체 진행현황']] },
       { id: 'report', label: '업무보고', tabs: [['report', '업무보고']] },
       { id: 'research', label: '연구사업', tabs: [['biz', '진행사항'], ['rfp', 'RFP 관리'], ['outcome', '성과 관리']] },
-      { id: 'maint', label: '유지보수', tabs: [['progress', '진행사항'], ['summary', '안건별 요약']] },
+      // 이력: PEO·PI 전용 월간보고용 장부 (PMO 메뉴에는 없음)
+      { id: 'maint', label: '유지보수', tabs: [['mhist', '이력'], ['progress', '진행사항'], ['summary', '안건별 요약']] },
       { id: 'mail', label: '메일송부현황', tabs: [['mail', '메일송부현황']] } // PEO 전체·PI
     ];
     if (isPM()) g.push({ id: 'admin', label: '과제 관리', tabs: [['admin', '과제 관리']] });
@@ -3893,6 +3978,7 @@ var Logic_ = (function () {
     }).join('');
     $('#app').innerHTML =
       (Backend.mode === 'demo' ? '<div class="demo-bar">체험 모드예요. 데이터는 이 브라우저에만 저장되고 다른 사람과 공유되지 않아요.<button class="link" data-act="demo-reset">체험 데이터 초기화</button></div>' : '') +
+      serverBuildBar() +
       '<header class="topbar">' + BRAND +
       '<nav class="tabs" role="tablist">' + top + '</nav>' +
       '<button class="storage-chip" id="storage-chip" data-act="storage-refresh" hidden></button>' +
@@ -3930,6 +4016,7 @@ var Logic_ = (function () {
     else if (S.tab === 'report') v.innerHTML = viewReport();
     else if (S.tab === 'outcome') v.innerHTML = viewOutcome();
     else if (S.tab === 'mail') v.innerHTML = viewMail();
+    else if (S.tab === 'mhist') v.innerHTML = viewMaintHistory();
     else { v.innerHTML = viewProgress(); renderProgressTable(); }
   }
   // 전체 진행현황: 세부 탭(사업 / 유지보수)
@@ -3954,6 +4041,17 @@ var Logic_ = (function () {
     if (!newBar) { renderView(); return; }
     while (bar.nextSibling) v.removeChild(bar.nextSibling);
     while (newBar.nextSibling) v.appendChild(newBar.nextSibling);
+  }
+  // 서버가 이 화면 파일과 다른 빌드인지 (서버 코드 지문이 다르거나, 지문을 보내지 않는 예전 서버)
+  // 다르면 화면은 새 기능을 보여 주는데 서버는 예전 규칙으로 처리해서 저장이 안 되거나 오류가 날 수 있음
+  function serverBuildBar() {
+    if (Backend.mode === 'demo' || !L.SERVER_BUILD || !S.data || !isPM()) return ''; // 고칠 수 있는 PI·PM에게만
+    var sb = S.data.serverBuild || '';
+    if (sb === L.SERVER_BUILD) return '';
+    var how = Backend.mode === 'supabase' ? 'Supabase에 <b>배포/supabase-api.ts</b>를 다시 Deploy' : 'Apps Script에 <b>배포/Code.gs</b>를 다시 배포';
+    return '<div class="demo-bar ver-bar" role="alert">' + (sb ? '서버와 이 화면 파일의 버전이 달라요' : '서버가 이 화면 파일보다 예전 버전이에요') +
+      ' (화면 ' + esc(L.SERVER_BUILD) + ' · 서버 ' + esc(sb || '예전') + '). 일부 저장이 안 되거나 예전 규칙으로 처리될 수 있어요. ' + how + '하고, 같은 빌드의 AxIOM.html을 쓰세요.' +
+      (isPI() ? '' : ' (PI에게 알려 주세요)') + '</div>';
   }
   function applyState(res) {
     if (res && res.state) { S.data = res.state; S.user = res.state.user; storageSoon(); } // 저장했으면 저장 공간도 다시 잼
@@ -4701,7 +4799,7 @@ var Logic_ = (function () {
       var b;
       try { b = JSON.parse(reader.result); } catch (e) { toast('백업 파일을 읽지 못했어요.', 'error'); return; }
       if (!b || b.app !== '업무보고' || !b.tables) { toast('업무보고 백업 파일이 아니에요.', 'error'); return; }
-      var LABEL = { users: '계정', projects: '과제', records: '유지보수 기록', closures: '최종완료', caseNotes: 'PEO 비고', years: '연차', plan: 'RFP 항목', tasks: '작업', logs: '진행 기록', milestones: '일정', reports: '업무보고', outcomes: '성과', mails: '메일송부현황', mailLogs: '메일 진행 기록', reportLogs: '팀 업무 수정 기록', settings: '설정' };
+      var LABEL = { users: '계정', projects: '과제', records: '유지보수 기록', closures: '최종완료', caseNotes: 'PEO 비고', years: '연차', plan: 'RFP 항목', tasks: '작업', logs: '진행 기록', milestones: '일정', reports: '업무보고', outcomes: '성과', mails: '메일송부현황', mailLogs: '메일 진행 기록', reportLogs: '팀 업무 수정 기록', maintHistory: '유지보수 이력', settings: '설정' };
       var list = Object.keys(LABEL).map(function (t) { return LABEL[t] + ' ' + ((b.tables[t] || []).length) + '건'; }).join(' · ');
       confirmBox('<b>' + esc(b.exportedAt || '') + '</b>에 ' + esc(b.exportedBy || '') + '님이 받은 백업이에요.<br><span class="hint">' + esc(list) + '</span><br><br>' +
         '지금 <b>' + esc(BACKEND_NAME[Backend.mode]) + '</b>에 있는 데이터를 <b>모두 지우고</b> 이 백업으로 바꿀까요? 되돌릴 수 없어요.', '모두 지우고 복원', true).then(function (ok) {
@@ -5719,6 +5817,8 @@ var Logic_ = (function () {
     var items = y ? planOf(p.name, y.yearNo) : [];
     var editable = canEditBizP(p);
     var f = S.bz;
+    // 유지보수 과제: 진행 단계(유지보수 진행사항 기록) / 이력(유지보수 > 이력 장부) 보기. 사람마다 마지막에 고른 보기를 기억
+    var mview = isMaint && f.mview === 'history' ? 'history' : 'stage';
 
     // 검색 조건
     var codeOpts = [['', '전체 업무번호']].concat(items.map(function (x) {
@@ -5727,15 +5827,19 @@ var Logic_ = (function () {
     }));
     var filters = '<div class="filters">' +
       '<select class="inp" data-filter="bz.project" aria-label="과제">' + options(projs.map(function (x) { return [x.name, projLabel(x)]; }), p.name) + '</select>' +
+      (isMaint ? '<div class="seg-group biz-mview" role="tablist" aria-label="보기">' + [['stage', '진행 단계'], ['history', '이력']].map(function (b) {
+        return '<button type="button" role="tab" class="seg-btn' + (mview === b[0] ? ' on' : '') + '" aria-selected="' + (mview === b[0]) + '" data-act="bz-mview" data-view="' + b[0] + '">' + b[1] + '</button>';
+      }).join('') + '</div>' : '') +
       (years.length ? '<select class="inp" data-filter="bz.yearNo" aria-label="연차">' + options(years.map(function (x) { return [x.yearNo, yearLabel(x)]; }), S.bz.yearNo) + '</select>' : '') +
       (items.length ? '<select class="inp" data-filter="bz.code" aria-label="업무번호">' + options(codeOpts, f.code) + '</select>' : '') +
       (isMaint ? yearSelect() : '') +
       '<select class="inp" data-filter="bz.status" aria-label="진행상태">' + options(L.PLAN_STATUSES.concat(['지연']), f.status || '', '전체 상태') + '</select>' +
       '<input type="search" class="inp search" data-filter="bz.q" placeholder="검색" value="' + esc(f.q || '') + '" aria-label="검색">' +
-      '<label class="check"><input type="checkbox" data-filter="bz.hideDone"' + (f.hideDone ? ' checked' : '') + '> 종결된 업무 숨기기</label>' +
+      // 이력 보기는 완료한 이력이 대부분이라 ‘종결된 업무 숨기기’를 쓰지 않음
+      (mview === 'history' ? '' : '<label class="check"><input type="checkbox" data-filter="bz.hideDone"' + (f.hideDone ? ' checked' : '') + '> 종결된 업무 숨기기</label>') +
       '</div>';
-    // 유지보수 과제: 유지보수 안건만 / 연구 과제: 작업
-    return head + filters + (isMaint ? caseSection(p, editable) : taskSection(p, y, items, editable));
+    // 유지보수 과제: 진행 단계(유지보수 안건) 또는 이력 / 연구 과제: 작업
+    return head + filters + (isMaint ? (mview === 'history' ? mhBizSection(p) : caseSection(p, editable)) : taskSection(p, y, items, editable));
   }
   // 상태 필터·검색·종결 숨기기를 작업에 적용
   function taskVisible(t, q) {
@@ -8592,6 +8696,301 @@ var Logic_ = (function () {
     if (e.target && e.target.id === 'ml-import-file') { mlReadFile(e.target.files[0]); e.target.value = ''; }
   });
 
+  /* ==========================================================================
+   * 유지보수 이력 (PEO 전용 · 월간보고용 장부)
+   *  - 유지보수 > 이력 탭 (하위 탭 순서: 이력 → 진행사항 → 안건별 요약). PI·PEO만 (PMO는 탭도 데이터도 없음)
+   *  - 유지보수 과제(일반용역 중 유지보수)만. 유지보수 진행사항과 따로 PEO가 직접 한 줄씩 적음
+   *  - 열은 월간보고 엑셀 양식과 같음:
+   *    구분 | 수정 요청 사항(요청자·요청일·세부 내용) | 특이사항(처리내용) | 작업 진행 상황 | 작업 기한(완료일) | 담당(연구원·개발자·디자인)
+   *  - 엑셀 내려받기: 사업마다 시트 하나, 양식과 같은 머리글(짙은 회청색·흰 글씨). ExcelJS를 필요할 때만 불러옴
+   *  - 연구사업 > 진행사항(유지보수 과제)의 ‘이력’ 보기도 이 표(mhTable)를 씀
+   * 빌드할 때 app.html 화면 코드 안(BIZ_UI 자리)에 그대로 들어갑니다.
+   * ========================================================================== */
+  var MH_STATUSES = ['대기', '진행중', '완료', '보류']; // 고르는 순서 (서버는 L.STATUSES로 확인)
+  function mhAll() { return S.data.maintHistory || []; }
+  function mhProjects() { return maintProjects().slice().sort(projOrder); }
+  // 쓰기·고치기: PEO·PI면 볼 수 있는 유지보수 과제 모두 (연구자는 배정된 과제만 받음, 서버에서도 확인)
+  function mhCanEdit() { return seesBiz() && mhProjects().length > 0; }
+  function mhCat(x) { return x.category === '시스템' ? '<span class="st st-run mh-cat">시스템</span>' : '<span class="st st-wait mh-cat">' + esc(x.category || '일반') + '</span>'; }
+  function mhLate(x) { return x.status !== '완료' && x.status !== '보류' && x.dueDate && x.dueDate < today(); }
+  function mhMD(d) { return d ? d.slice(5, 7) + '.' + d.slice(8, 10) : ''; } // 엑셀 양식의 날짜 (12.26)
+
+  // 정렬: 기본은 요청일 최근 순 (같은 날이면 나중에 넣은 것 먼저). 머리글을 누르면 그 열 기준
+  SORTERS.mhist = {
+    category: function (x) { return x.category; }, requester: function (x) { return x.requester; }, requestDate: function (x) { return x.requestDate; },
+    status: function (x) { return MH_STATUSES.indexOf(x.status); }, dueDate: function (x) { return x.dueDate; },
+    researcher: function (x) { return x.researcher; }, developer: function (x) { return x.developer; }, designer: function (x) { return x.designer; }
+  };
+  function mhByRecent(a, b) {
+    if (a.requestDate !== b.requestDate) return a.requestDate < b.requestDate ? 1 : -1;
+    return String(a.createdAt || '') < String(b.createdAt || '') ? 1 : -1;
+  }
+  // 연도·월: 그때 요청했거나, 작업 기한(완료일)이 그때인 이력 (월만 고르면 모든 해의 그 달)
+  function mhInMonth(x, year, month) {
+    function hit(d) { return !!d && (!year || d.slice(0, 4) === year) && (!month || d.slice(5, 7) === month); }
+    return hit(x.requestDate) || hit(x.dueDate);
+  }
+  // f: 조건 (유지보수 > 이력은 S.mh, 연구사업 진행사항의 이력 보기는 그 화면 조건을 바꿔서 넘김)
+  function mhFiltered(f, projectName) {
+    return mhAll().filter(function (x) {
+      if (projectName && x.project !== projectName) return false;
+      if (!projectName && f.project && x.project !== f.project) return false;
+      if ((f.year || f.month) && !mhInMonth(x, f.year, f.month)) return false;
+      if (f.category && x.category !== f.category) return false;
+      if (f.status && x.status !== f.status) return false;
+      if (f.hideDone && x.status === '완료') return false;
+      return matchQ(f.q, [x.project, x.requester, x.content, x.result, x.researcher, x.developer, x.designer, x.category, x.status]);
+    }).sort(mhByRecent);
+  }
+
+  /* ---------- 화면: 유지보수 > 이력 ---------- */
+  function viewMaintHistory() {
+    var head = '<div class="view-head"><h1>유지보수 이력 <span class="title-pill">월간보고용</span></h1></div>';
+    if (!mhProjects().length) return head + '<div class="card empty"><strong>표시할 유지보수 과제가 없어요</strong></div>';
+    var f = S.mh, ys = {};
+    ys[today().slice(0, 4)] = true;
+    mhAll().forEach(function (x) { if (x.requestDate) ys[x.requestDate.slice(0, 4)] = true; if (x.dueDate) ys[x.dueDate.slice(0, 4)] = true; });
+    var months = [];
+    for (var i = 1; i <= 12; i++) months.push([('0' + i).slice(-2), i + '월']);
+    var filters = '<div class="filters">' +
+      '<select class="inp" data-filter="mh.project" aria-label="사업">' + options(mhProjects().map(function (p) { return p.name; }), f.project, '전체 사업') + '</select>' +
+      '<select class="inp" data-filter="mh.year" aria-label="연도">' + options(Object.keys(ys).sort().reverse().map(function (y) { return [y, y + '년']; }), f.year, '전체 연도') + '</select>' +
+      '<select class="inp" data-filter="mh.month" aria-label="월" title="그 달에 요청했거나 작업 기한(완료일)이 그 달인 이력">' + options(months, f.month, '전체 월') + '</select>' +
+      '<select class="inp" data-filter="mh.category" aria-label="구분">' + options(L.MH_CATEGORIES, f.category, '전체 구분') + '</select>' +
+      '<select class="inp" data-filter="mh.status" aria-label="작업 진행 상황">' + options(MH_STATUSES, f.status, '전체 진행 상황') + '</select>' +
+      '<input type="search" class="inp search" data-filter="mh.q" placeholder="요청자·내용·담당 검색" value="' + esc(f.q) + '" aria-label="검색">' +
+      '<label class="check"><input type="checkbox" data-filter="mh.hideDone"' + (f.hideDone ? ' checked' : '') + '> 완료 숨기기</label></div>';
+    return head + filters + mhPanel(mhFiltered(f), '', true);
+  }
+  // 이력 표 패널. projectName: 한 사업만 (연구사업 진행사항). 여러 사업이면 사업 이름 줄 아래로 묶어 보여 줌
+  function mhPanel(rows, projectName, withExport) {
+    var edit = mhCanEdit();
+    var all = projectName ? mhAll().filter(function (x) { return x.project === projectName; }) : mhAll();
+    var empty = all.length
+      ? '<div class="empty"><strong>조건에 맞는 이력이 없어요</strong></div>'
+      : '<div class="empty"><strong>아직 적은 이력이 없어요</strong>' + (edit ? '‘+ 이력 추가’로 적어 주세요.' : '') + '</div>';
+    return '<section class="panel"><div class="panel-head"><h2>이력</h2><span class="count">' + rows.length + (projectName ? ' / ' + all.length : '') + '건</span>' +
+      '<span class="spacer"></span>' +
+      (withExport ? '<button class="btn" data-act="mh-export"' + (projectName ? ' data-project="' + esc(projectName) + '"' : '') + '>⤓ 엑셀 다운로드</button>' : '') +
+      (edit ? '<button class="btn primary" data-act="mh-add"' + (projectName ? ' data-project="' + esc(projectName) + '"' : '') + '>+ 이력 추가</button>' : '') + '</div>' +
+      (rows.length ? mhTable(rows, !projectName) : empty) + '</section>';
+  }
+  var MH_COLS = 10;
+  function mhTable(rows, groupByProject) {
+    var sh = function (k, l, cls) { return sortHead('mhist', k, l, cls); };
+    var two = function (k, l, cls) { return sh(k, l, cls).replace('<th ', '<th rowspan="2" '); };
+    var thead = '<thead><tr>' + two('category', '구분') + '<th colspan="3" class="ml-grp">수정 요청 사항</th>' +
+      '<th rowspan="2">특이사항(처리내용)</th>' + two('status', '작업 진행 상황') + two('dueDate', '작업 기한(완료일)') +
+      '<th colspan="3" class="ml-grp">담당</th></tr><tr>' +
+      sh('requester', '요청자') + sh('requestDate', '요청일') + '<th>세부 내용</th>' +
+      sh('researcher', '연구원') + sh('developer', '개발자') + sh('designer', '디자인') + '</tr></thead>';
+    var sorted = applySort('mhist', rows), edit = mhCanEdit();
+    function row(x) {
+      return '<tr' + (edit ? ' class="clickable" data-act="mh-edit" data-id="' + esc(x.id) + '"' : '') + '>' +
+        '<td>' + mhCat(x) + '</td><td>' + (esc(x.requester) || '-') + '</td><td class="date">' + fmtDate(x.requestDate) + '</td>' +
+        '<td class="wrap mh-content">' + esc(x.content) + '</td><td class="wrap mh-result">' + (esc(x.result) || '<span class="hint">-</span>') + '</td>' +
+        '<td>' + statusChip(x.status) + '</td>' +
+        '<td class="date">' + (fmtDate(x.dueDate) || '-') + (mhLate(x) ? ' <span class="late">⚠ 지연</span>' : '') + '</td>' +
+        '<td>' + (esc(x.researcher) || '-') + '</td><td>' + (esc(x.developer) || '-') + '</td><td>' + (esc(x.designer) || '-') + '</td></tr>';
+    }
+    var body;
+    if (groupByProject) {
+      var by = {}, order = [];
+      sorted.forEach(function (x) { if (!by[x.project]) { by[x.project] = []; order.push(x.project); } by[x.project].push(x); });
+      var rank = {};
+      mhProjects().forEach(function (p, i) { rank[p.name] = i; });
+      order.sort(function (a, b) { return (rank[a] === undefined ? 999 : rank[a]) - (rank[b] === undefined ? 999 : rank[b]); });
+      body = order.map(function (pn) {
+        return '<tr class="mh-grp"><td colspan="' + MH_COLS + '"><span class="mh-grp-name">' + esc(pn) + '</span> <span class="count">' + by[pn].length + '건</span></td></tr>' + by[pn].map(row).join('');
+      }).join('');
+    } else body = sorted.map(row).join('');
+    return '<div class="tbl-wrap"><table class="tbl mh-tbl">' + thead + '<tbody>' + body + '</tbody></table></div>';
+  }
+
+  /* ---------- 추가·수정 창 ---------- */
+  function mhNameList() {
+    return '<datalist id="mh-names">' + (S.data.users || []).filter(function (u) { return u.active !== false; }).map(function (u) { return '<option value="' + esc(u.name) + '">'; }).join('') + '</datalist>';
+  }
+  function openMhModal(id, defProject) {
+    var x = id ? mhAll().filter(function (m) { return m.id === id; })[0] : null;
+    if (id && !x) { toast('이력을 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.', 'error'); return; }
+    var names = mhProjects().map(function (p) { return p.name; });
+    if (!names.length) return;
+    var v = x || { project: defProject || S.mh.project || names[0], category: '시스템', requester: '', requestDate: today(), content: '', result: '',
+      status: '진행중', dueDate: '', researcher: S.user.role === '연구자' ? S.user.name : '', developer: '', designer: '' };
+    if (v.project && names.indexOf(v.project) < 0) names.push(v.project);
+    var REQ = ' <em>*</em>';
+    function seg(name, list, cur) {
+      return '<div class="seg-group rp-st" role="radiogroup">' + list.map(function (s) {
+        return '<label class="seg-opt"><input type="radio" name="' + name + '" value="' + esc(s) + '"' + (s === cur ? ' checked' : '') + '><span>' + esc(s) + '</span></label>';
+      }).join('') + '</div>';
+    }
+    var m = openModal({
+      title: x ? '유지보수 이력 · ' + x.project : '유지보수 이력 추가', size: 'wide',
+      body: '<form class="form" id="mh-form" autocomplete="off" novalidate>' +
+        '<div class="form-grid"><label class="fld"><span class="lbl">사업' + REQ + '</span><select class="inp" name="project">' + options(names, v.project) + '</select></label>' +
+        '<div class="fld"><span class="lbl">구분' + REQ + '</span>' + seg('category', L.MH_CATEGORIES, v.category) + '</div></div>' +
+        '<div class="form-grid"><label class="fld"><span class="lbl">요청자' + REQ + '</span><input class="inp" name="requester" maxlength="50" value="' + esc(v.requester) + '" placeholder="예: 김주무관"></label>' +
+        '<label class="fld"><span class="lbl">요청일' + REQ + '</span><input type="date" class="inp" name="requestDate" value="' + esc(v.requestDate) + '"></label></div>' +
+        '<label class="fld"><span class="lbl">세부 내용' + REQ + '</span><textarea class="inp" name="content" rows="3" maxlength="1000" placeholder="예: 사용자페이지 독성정보탭 오류 수정 요청">' + esc(v.content) + '</textarea></label>' +
+        '<label class="fld"><span class="lbl">특이사항(처리내용)</span><textarea class="inp" name="result" rows="3" maxlength="2000" placeholder="예: 메뉴 추가 및 css 수정">' + esc(v.result) + '</textarea></label>' +
+        '<div class="form-grid"><div class="fld"><span class="lbl">작업 진행 상황' + REQ + '</span>' + seg('status', MH_STATUSES, v.status) + '</div>' +
+        '<label class="fld"><span class="lbl">작업 기한(완료일) <span class="hint">완료로 고르면 비어 있을 때 오늘</span></span><input type="date" class="inp" name="dueDate" value="' + esc(v.dueDate) + '"></label></div>' +
+        '<div class="form-grid three"><label class="fld"><span class="lbl">담당 연구원</span><input class="inp" name="researcher" maxlength="100" list="mh-names" value="' + esc(v.researcher) + '"></label>' +
+        '<label class="fld"><span class="lbl">담당 개발자</span><input class="inp" name="developer" maxlength="100" list="mh-names" value="' + esc(v.developer) + '"></label>' +
+        '<label class="fld"><span class="lbl">담당 디자인</span><input class="inp" name="designer" maxlength="100" value="' + esc(v.designer) + '"></label></div>' +
+        mhNameList() +
+        (x ? '<p class="hint ml-meta">작성 ' + esc(x.author || '-') + (x.updatedBy ? ' · 마지막 수정 ' + esc(x.updatedBy) : '') + (x.updatedAt ? ' ' + esc(String(x.updatedAt).slice(0, 16)) : '') + '</p>' : '') +
+        '</form>',
+      footer: (x ? '<span class="left"><button class="btn danger-line" data-act="mh-del" data-id="' + esc(x.id) + '">삭제</button></span>' : '') +
+        '<button class="btn ghost" data-act="modal-close">취소</button><button class="btn primary" id="mh-save">저장</button>'
+    });
+    var form = $('#mh-form', m);
+    form.addEventListener('change', function (e) {
+      // 완료로 고르면 작업 기한(완료일)이 비어 있을 때 오늘로
+      if (e.target.name === 'status' && e.target.value === '완료' && !form.dueDate.value) form.dueDate.value = today();
+    });
+    var saving = false, btn = $('#mh-save', m);
+    btn.addEventListener('click', function () {
+      if (saving) return; // 저장 중에 다시 누르면 무시 (두 번 저장되지 않게)
+      function radio(n) { var c = form.querySelector('input[name="' + n + '"]:checked'); return c ? c.value : ''; }
+      var payload = {
+        project: form.project.value, category: radio('category'), requester: form.requester.value.trim(), requestDate: form.requestDate.value,
+        content: form.content.value.trim(), result: form.result.value.trim(), status: radio('status'), dueDate: form.dueDate.value,
+        researcher: form.researcher.value.trim(), developer: form.developer.value.trim(), designer: form.designer.value.trim()
+      };
+      var need = [['project', '사업'], ['category', '구분'], ['requester', '요청자'], ['requestDate', '요청일'], ['content', '세부 내용'], ['status', '작업 진행 상황']];
+      var miss = need.filter(function (k) { return !payload[k[0]]; });
+      if (miss.length) {
+        toast(miss.map(function (k) { return k[1]; }).join('·') + '을(를) 입력해 주세요.', 'error');
+        var el = form[miss[0][0]];
+        if (el && el.focus) el.focus();
+        return;
+      }
+      if (x) payload.id = x.id;
+      saving = true; btn.disabled = true;
+      call('saveMaintHistory', payload).then(function (res) {
+        closeModal(); applyState(res); toast(x ? '이력을 고쳤어요.' : '이력을 추가했어요.');
+      }, function () { saving = false; btn.disabled = false; });
+    });
+  }
+
+  /* ---------- 엑셀 내려받기 (월간보고 양식) ----------
+   * 사업마다 시트 하나 (이름: ‘번호. 사업’, 예: 9. mToxInfo). 1~2줄 머리글, 3줄부터 요청일 순
+   * 머리글: 맑은 회청색(44546A) 바탕·흰 굵은 글씨·가는 테두리, 날짜는 12.26 같은 글자 */
+  var EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+  var excelJsPromise = null;
+  function loadExcelJS() {
+    if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+    if (!excelJsPromise) {
+      excelJsPromise = new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = EXCELJS_URL;
+        s.onload = function () { window.ExcelJS ? resolve(window.ExcelJS) : reject(new Error('엑셀 기능을 불러오지 못했어요.')); };
+        s.onerror = function () { excelJsPromise = null; reject(new Error('엑셀 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return excelJsPromise;
+  }
+  // 시트 이름: 31자 이내, : \ / ? * [ ] 는 쓸 수 없음. 겹치면 뒤에 (2)
+  function mhSheetName(pn, used) {
+    var p = projByName(pn), base = ((p && p.no ? p.no + '. ' : '') + pn).replace(/[:\\\/?*\[\]]/g, ' ').slice(0, 31) || '이력';
+    var name = base, n = 2;
+    while (used[name.toLowerCase()]) { name = base.slice(0, 27) + ' (' + n + ')'; n++; }
+    used[name.toLowerCase()] = true;
+    return name;
+  }
+  // f: 화면 조건 (파일 이름에 연도·월을 붙임)
+  function mhExport(rows, f) {
+    if (!rows.length) { toast('내려받을 이력이 없어요.', 'error'); return; }
+    setBusy(true);
+    loadExcelJS().then(function (EJ) {
+      var wb = new EJ.Workbook(), used = {};
+      var by = {}, order = [];
+      rows.slice().sort(function (a, b) { return -mhByRecent(a, b); }).forEach(function (x) { // 시트 안은 요청일 순 (오래된 것부터)
+        if (!by[x.project]) { by[x.project] = []; order.push(x.project); } by[x.project].push(x);
+      });
+      var rank = {};
+      mhProjects().forEach(function (p, i) { rank[p.name] = i; });
+      order.sort(function (a, b) { return (rank[a] === undefined ? 999 : rank[a]) - (rank[b] === undefined ? 999 : rank[b]); });
+      var thin = { style: 'thin', color: { argb: 'FF000000' } };
+      var headStyle = {
+        font: { name: 'Noto Sans KR', size: 9, bold: true, color: { argb: 'FFFFFFFF' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF44546A' } },
+        alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+        border: { top: thin, left: thin, bottom: thin, right: thin }
+      };
+      // 열 너비: 양식과 비슷하게 (담당 칸은 이름이 길 수 있어 조금 넓게). ExcelJS는 너비 9를 기본값으로 보고 빼 버리므로 9.5
+      var widths = [12.5, 10, 7, 57.5, 70.5, 12, 12.5, 9.5, 9.5, 9.5];
+      var center = [1, 2, 3, 6, 7, 8, 9, 10];
+      order.forEach(function (pn) {
+        var ws = wb.addWorksheet(mhSheetName(pn, used), { views: [{ state: 'frozen', xSplit: 0, ySplit: 2 }] });
+        widths.forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+        ws.getRow(1).values = ['구분', '수정 요청 사항', '', '', '특이사항(처리내용)', '작업 진행 상황', '작업 기한(완료일)', '담당', '', ''];
+        ws.getRow(2).values = ['', '요청자', '요청일', '세부 내용', '', '', '', '연구원', '개발자', '디자인'];
+        ['A1:A2', 'B1:D1', 'E1:E2', 'F1:F2', 'G1:G2', 'H1:J1'].forEach(function (r) { ws.mergeCells(r); });
+        [1, 2].forEach(function (r) {
+          for (var c = 1; c <= MH_COLS; c++) { var cell = ws.getCell(r, c); cell.font = headStyle.font; cell.fill = headStyle.fill; cell.alignment = headStyle.alignment; cell.border = headStyle.border; }
+        });
+        by[pn].forEach(function (x, i) {
+          var row = ws.getRow(i + 3);
+          row.values = [x.category, x.requester, mhMD(x.requestDate), x.content, x.result, x.status, mhMD(x.dueDate), x.researcher, x.developer, x.designer];
+          for (var c = 1; c <= MH_COLS; c++) {
+            var cell = row.getCell(c);
+            cell.font = { name: 'Arial', size: 10 };
+            cell.alignment = { horizontal: center.indexOf(c) >= 0 ? 'center' : 'left', vertical: 'middle', wrapText: c === 4 || c === 5 };
+            if (c === 3 || c === 7) cell.numFmt = '@'; // 날짜는 글자로 (12.26)
+          }
+        });
+      });
+      return wb.xlsx.writeBuffer().then(function (buf) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+        var parts = [];
+        if (order.length === 1) parts.push(order[0]);
+        if (f.year || f.month) parts.push((f.year ? f.year + '년' : '') + (f.month ? (+f.month) + '월' : ''));
+        parts.push(today().replace(/-/g, ''));
+        a.download = '유지보수_이력_' + parts.join('_').replace(/[\\\/:*?"<>|]/g, ' ') + '.xlsx';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+        setBusy(false);
+        toast(rows.length + '건을 엑셀로 내려받았어요' + (order.length > 1 ? ' (사업 ' + order.length + '개 시트)' : '') + '.');
+      });
+    }).catch(function (e) { setBusy(false); toast((e && e.message) || '엑셀을 만들지 못했어요.', 'error'); });
+  }
+
+  var MH_ACTIONS = {
+    // 연구사업 > 진행사항(유지보수 과제): 진행 단계 / 이력 보기 (이 브라우저에 기억)
+    'bz-mview': function (el) { S.bz.mview = el.getAttribute('data-view') === 'history' ? 'history' : 'stage'; savePrefs(); renderView(); },
+    'mh-add': function (el) { openMhModal('', el.getAttribute('data-project') || ''); },
+    'mh-edit': function (el) { openMhModal(el.getAttribute('data-id')); },
+    'mh-del': function (el) {
+      var id = el.getAttribute('data-id');
+      confirmBox('이 이력을 삭제할까요? 되돌릴 수 없어요.', '삭제', true).then(function (ok) {
+        if (ok) call('deleteMaintHistory', { id: id }).then(function (res) { closeModal(); applyState(res); toast('삭제했어요.'); }, noop);
+      });
+    },
+    // 엑셀: 지금 화면에 보이는 이력 그대로 (연구사업 진행사항에서는 그 사업만)
+    'mh-export': function (el) {
+      var pn = el.getAttribute('data-project');
+      if (pn) { var bf = mhBizFilter(); mhExport(mhBizRows(pn), bf); } else mhExport(mhFiltered(S.mh), S.mh);
+    }
+  };
+  Object.keys(MH_ACTIONS).forEach(function (k) { BIZ_ACTIONS[k] = MH_ACTIONS[k]; });
+
+  /* ---------- 연구사업 > 진행사항 (유지보수 과제): 진행 단계 / 이력 보기 ----------
+   * 같은 사업의 이력을 연구사업 진행사항 조건(연도·상태·검색·종결 숨기기)으로 걸러 보여 줌 */
+  function mhBizFilter() {
+    var f = S.bz, st = f.status === '예정' ? '대기' : (f.status === '지연' ? '' : f.status || '');
+    return { year: S.g.year || '', month: '', category: '', status: st, hideDone: false, q: f.q || '' };
+  }
+  function mhBizRows(projectName) {
+    var rows = mhFiltered(mhBizFilter(), projectName);
+    return S.bz.status === '지연' ? rows.filter(mhLate) : rows;
+  }
+  function mhBizSection(p) { return mhPanel(mhBizRows(p.name), p.name, true); }
+
 
   /* ---------- 이벤트 ---------- */
   var actions = {
@@ -8708,6 +9107,7 @@ var Logic_ = (function () {
     }
     if (path === 'bz.q') { renderBizResults(); return; } // 검색 칸은 그대로 두고 결과만 (한글 입력이 끊기지 않게)
     if (parts[0] === 'ml') { if (path === 'ml.q') renderBelowFilters(viewMail); else renderView(); return; } // 메일 송부 현황
+    if (parts[0] === 'mh') { if (path === 'mh.q') renderBelowFilters(viewMaintHistory); else renderView(); return; } // 유지보수 이력
     if (parts[0] === 'rp' || parts[0] === 'oc') { // 업무보고·성과관리
       if (path === 'oc.project') S.oc.yearNo = '';
       renderView();
