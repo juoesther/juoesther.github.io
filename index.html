@@ -465,6 +465,11 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .rp-card.clickable { cursor: pointer; }
 .rp-card.clickable:hover { background: var(--accent-wash); }
 .rp-card-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
+/* 카드 오른쪽 위 모서리 × (삭제 / 연동은 업무보고에서만 빼기) */
+.rp-card.has-x { position: relative; }
+.rp-card.has-x .rp-card-h { padding-right: 24px; }
+.rp-card-x { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; line-height: 20px; cursor: pointer; }
+.rp-card-x:hover, .rp-card-x:focus-visible { color: var(--danger); background: var(--danger-wash); border-color: var(--danger-line); }
 .rp-card-b { margin: 6px 0; white-space: pre-line; word-break: keep-all; overflow-wrap: anywhere; }
 .rp-card-f { display: flex; align-items: center; gap: 6px; }
 .rp-dl { font-size: 13px; color: var(--ink-2); }
@@ -7940,10 +7945,18 @@ var Logic_ = (function () {
       }, function () { going = false; btn.disabled = false; });
     });
   }
+  // 카드 오른쪽 위 × : 내가 쓴 업무는 삭제, 연동(유지보수·사업 기록) 업무는 업무보고에서만 빼기 (원래 기록은 그대로)
+  // 누르면 확인 창이 뜨고, 카드를 눌러 여는 수정 창의 삭제와 같음
+  function rpCardDel(t) {
+    if (t.linked) {
+      return rpCanEdit(t) ? '<button type="button" class="rp-card-x" data-act="rp-link-hide" data-key="' + esc(t.linkKey) + '" aria-label="업무보고에서 삭제" title="업무보고에서만 지워요 (원래 ' + esc(t.linked) + ' 기록은 그대로)">×</button>' : '';
+    }
+    return rpCanDelete(t) ? '<button type="button" class="rp-card-x" data-act="rp-del" data-id="' + esc(t.id) + '" aria-label="삭제" title="삭제">×</button>' : '';
+  }
   // inGroup: 과제 묶음 안의 카드 (과제 이름은 묶음 제목에 있으니 빼고)
   function rpCard(t, inGroup) {
-    var edit = rpCanEdit(t);
-    return '<div class="rp-card' + (t.linked ? ' linked' : '') + (edit ? ' clickable' : '') + '"' + (edit ? rpEditAttr(t) : '') + '>' +
+    var edit = rpCanEdit(t), del = rpCardDel(t);
+    return '<div class="rp-card' + (t.linked ? ' linked' : '') + (edit ? ' clickable' : '') + (del ? ' has-x' : '') + '"' + (edit ? rpEditAttr(t) : '') + '>' + del +
       '<div class="rp-card-h">' + (inGroup ? '' : '<b>' + esc(t.project || '기타') + '</b>') + rpChip(t.status) +
       (t.linked ? rpLinkTag(t) : '') + rpCarryTag(t) + rpDailyTag(t) +
       '<span class="spacer"></span>' + (t.deadline ? '<span class="rp-dl">마감 ' + rpDeadline(t) + '</span>' : '') + '</div>' +
@@ -8159,8 +8172,8 @@ var Logic_ = (function () {
   var REPORT_ACTIONS = {
     'rp-edit-link': function (el) { openLinkModal(el.getAttribute('data-key')); },
     'rp-link-hide': function (el) {
-      var key = el.getAttribute('data-key');
-      confirmBox('이 연동 업무를 <b>업무보고에서만</b> 지울까요?<br><span class="hint">원래 유지보수·사업 기록은 그대로 남아요. ‘지운 연동’에서 다시 넣을 수 있어요.</span>', '업무보고에서 삭제', true).then(function (ok) {
+      var key = el.getAttribute('data-key'), lt = RP_LINKS[key];
+      confirmBox((lt ? '<b>' + esc(lt.content) + '</b><br>' : '') + '이 연동 업무를 <b>업무보고에서만</b> 지울까요?<br><span class="hint">원래 유지보수·사업 기록은 그대로 남아요. ‘지운 연동’에서 다시 넣을 수 있어요.</span>', '업무보고에서 삭제', true).then(function (ok) {
         if (ok) rpSetHidden(key, true).then(function (res) { closeModal(); applyState(res); toast('업무보고에서 지웠어요. 원래 기록은 그대로예요.'); }, noop);
       });
     },
@@ -8266,8 +8279,8 @@ var Logic_ = (function () {
     'rp-team-copy': function () { copyText(rpTeamCopyText(rpDay()), '팀 업무를 복사했어요. 메신저나 메일에 붙여 넣으세요.'); },
     'rp-edit': function (el) { openReportModal(el.getAttribute('data-id')); },
     'rp-del': function (el) {
-      var id = el.getAttribute('data-id');
-      confirmBox('이 업무를 삭제할까요? 되돌릴 수 없어요.', '삭제', true).then(function (ok) {
+      var id = el.getAttribute('data-id'), t = (S.data.reports || []).filter(function (x) { return x.id === id; })[0];
+      confirmBox((t ? '<b>' + esc(t.content) + '</b><br>' : '') + '이 업무를 삭제할까요? 되돌릴 수 없어요.', '삭제', true).then(function (ok) {
         if (ok) call('deleteReport', { id: id }).then(function (res) { closeModal(); applyState(res); toast('삭제했어요.'); }, noop);
       });
     },
