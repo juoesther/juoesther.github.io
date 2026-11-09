@@ -291,8 +291,10 @@ select.inp { padding-right: 28px; }
 /* 표 */
 .tbl-wrap { overflow: auto; max-height: calc(100vh - 230px); min-height: 160px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+/* 머리글은 칸마다가 아니라 머리글 전체(thead)를 한 덩어리로 위에 고정: 두 줄 머리글(칸 합치기)도 스크롤할 때 윗줄이 가려지지 않음 */
+.tbl thead { position: sticky; top: 0; z-index: 3; }
 .tbl th {
-  position: sticky; top: 0; z-index: 1; background: var(--surface-2); color: var(--ink-2); font-weight: 600;
+  background: var(--surface-2); color: var(--ink-2); font-weight: 600;
   text-align: center; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap;
 }
 .th-sort {
@@ -418,6 +420,8 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .mh-tbl td.mh-content { min-width: 240px; max-width: 420px; font-weight: 600; }
 .mh-tbl td.mh-result { min-width: 220px; max-width: 420px; color: var(--ink-2); }
 .mh-tbl tr.mh-grp td { background: var(--surface-2); font-weight: 700; border-top: 2px solid var(--line-strong); }
+/* 사업 묶음 줄은 스크롤해도 머리글 바로 아래에 붙어 있음 (지금 보는 줄이 어느 사업인지 늘 보이게). --head-h는 화면이 머리글 높이를 재서 넣음 */
+.mh-tbl tr.mh-grp td, .rp-tbl tr.rp-grp td, .oc-tbl tr.rp-grp td { position: sticky; top: var(--head-h, 38px); z-index: 2; box-shadow: 0 1px 0 var(--line-strong); }
 .mh-tbl .mh-grp-name { font-size: 15px; color: var(--ink); }
 .st.mh-cat { min-width: 52px; justify-content: center; }
 .biz-mview { margin-left: 4px; }
@@ -733,14 +737,15 @@ body.modal-open { overflow: hidden; }
 .tbl tr.grp.focus td { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
 
 /* 연간 계획표 (전체 진행현황 > 사업) */
-.plan-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+/* 화면 높이 안에서 스크롤 → 월 머리글(두 줄)이 늘 위에 보임 */
+.plan-wrap { overflow: auto; max-height: calc(100vh - 230px); border: 1px solid var(--line); border-radius: 8px; }
 /* 월 칸 너비를 고정: 일정 글자가 길면 칸이 넓어지지 않고 칸 안에서 줄이 바뀜 */
 .plan { border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: fixed; width: 100%; min-width: 1200px; }
 .plan col.c-sc { width: 70px; }
 .plan col.c-sc2 { width: 160px; }
 .plan th, .plan td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.plan th { background: var(--surface-2); color: var(--ink-2); font-weight: 600; padding: 6px 4px; text-align: center; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
-.plan thead tr:nth-child(2) th { top: 31px; }
+.plan thead { position: sticky; top: 0; z-index: 4; } /* 연도 줄 + 월 줄을 한 덩어리로 고정 */
+.plan th { background: var(--surface-2); color: var(--ink-2); font-weight: 600; padding: 6px 4px; text-align: center; white-space: nowrap; }
 .plan th.mh { min-width: 66px; }
 .plan th.nexty { background: var(--surface-3); }
 .plan td.nexty { background: var(--surface-2); }
@@ -830,7 +835,8 @@ body.modal-open { overflow: hidden; }
 .rv-gantt { border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: fixed; width: 100%; min-width: 860px; }
 .rv-gantt col.c-code { width: 48px; }
 .rv-gantt col.c-m { width: 30px; }
-.rv-gantt th { background: var(--surface-2); color: var(--ink-2); font-weight: 600; padding: 6px 0; text-align: center; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 1; font-size: 12px; }
+.rv-gantt thead { position: sticky; top: 0; z-index: 3; }
+.rv-gantt th { background: var(--surface-2); color: var(--ink-2); font-weight: 600; padding: 6px 0; text-align: center; border-bottom: 1px solid var(--line); font-size: 12px; }
 .rv-gantt th.nexty { background: var(--surface-3); }
 .rv-gantt th.rv-name { text-align: left; padding-left: 12px; position: sticky; left: 0; z-index: 2; font-size: 13px; }
 .rv-gantt td { border-bottom: 1px solid var(--line); padding: 0; height: 26px; }
@@ -912,7 +918,7 @@ body.modal-open { overflow: hidden; }
   .overlay { padding: 0; }
   .modal, .modal.wide, .modal.xwide { max-width: none; min-height: 100vh; border-radius: 0; }
   .toolbar .search { max-width: none; }
-  .tbl-wrap { max-height: none; }
+  .tbl-wrap, .plan-wrap { max-height: none; }
   .tbl td.sticky-act, .tbl th.sticky-act { position: static; box-shadow: none; }
 }
 </style>
@@ -4139,7 +4145,15 @@ var Logic_ = (function () {
     else if (S.tab === 'mail') v.innerHTML = viewMail();
     else if (S.tab === 'mhist') v.innerHTML = viewMaintHistory();
     else { v.innerHTML = viewProgress(); renderProgressTable(); }
+    stickGroupRows();
   }
+  // 사업 묶음 줄(‘mFCDB 98건’)을 스크롤할 때 머리글 바로 아래에 붙여 둠: 머리글 높이(두 줄이면 두 줄)를 표마다 재서 그 아래에 고정
+  function stickGroupRows() {
+    $$('#view table').forEach(function (t) {
+      if (t.tHead && t.querySelector('tr.mh-grp, tr.rp-grp')) t.style.setProperty('--head-h', t.tHead.offsetHeight + 'px');
+    });
+  }
+  window.addEventListener('resize', function () { if (S.user) stickGroupRows(); });
   // 전체 진행현황: 세부 탭(사업 / 유지보수)
   function viewOverview() {
     var subs = overviewSubTabs();
@@ -4162,6 +4176,7 @@ var Logic_ = (function () {
     if (!newBar) { renderView(); return; }
     while (bar.nextSibling) v.removeChild(bar.nextSibling);
     while (newBar.nextSibling) v.appendChild(newBar.nextSibling);
+    stickGroupRows();
   }
   // 서버가 이 화면 파일과 다른 빌드인지 (서버 코드 지문이 다르거나, 지문을 보내지 않는 예전 서버)
   // 다르면 화면은 새 기능을 보여 주는데 서버는 예전 규칙으로 처리해서 저장이 안 되거나 오류가 날 수 있음
@@ -5051,7 +5066,7 @@ var Logic_ = (function () {
       '<label class="check" title="모든 사람의 과제 관리·전체 진행현황·RFP 관리에 똑같이 적용돼요"><input type="checkbox" data-filter="pj.hideEnded"' + (pjHideEnded() ? ' checked' : '') + '> 기간이 지난 과제 숨기기 <span class="hint">(모든 사람에게 적용)</span></label></div>';
     var pmo = pmoView(); // PMO·PM: 책임자·팀장 칸 없음, 참여자는 PEO·PMO로만
     var table = list.length
-      ? '<div class="tbl-wrap" style="max-height:none"><table class="tbl pj-tbl"><thead><tr><th class="drag-col"><span class="sr-only">순서</span></th>' +
+      ? '<div class="tbl-wrap"><table class="tbl pj-tbl"><thead><tr><th class="drag-col"><span class="sr-only">순서</span></th>' +
         sortHead('projects', 'name', '과제') + sortHead('projects', 'kind', '구분') + sortHead('projects', 'ministry', '주관부처') + sortHead('projects', 'contract', '계약형태') + sortHead('projects', 'period', '기간') +
         (pmo ? '' : sortHead('projects', 'leader', '책임자·팀장')) + sortHead('projects', 'members', '참여자') + '</tr></thead><tbody>' +
         applySort('projects', list).map(function (p) {
@@ -5208,7 +5223,10 @@ var Logic_ = (function () {
     for (var i = 0; i < rows.length; i++) { var b = rows[i].getBoundingClientRect(); if (e.clientY < b.top + b.height / 2) { target = rows[i]; break; } }
     if (target) { if (pjDrag.row.nextElementSibling !== target) pjDrag.tbody.insertBefore(pjDrag.row, target); }
     else if (pjDrag.tbody.lastElementChild !== pjDrag.row) pjDrag.tbody.appendChild(pjDrag.row);
-    if (e.clientY < 70) window.scrollBy(0, -12); else if (e.clientY > window.innerHeight - 50) window.scrollBy(0, 12); // 화면 끝에서는 저절로 스크롤
+    // 끝에서는 저절로 스크롤: 표 상자(머리글 고정용으로 상자 안에서 스크롤) → 화면
+    var wrap = pjDrag.row.closest('.tbl-wrap'), wb = wrap && wrap.scrollHeight > wrap.clientHeight ? wrap.getBoundingClientRect() : null;
+    if (wb) { if (e.clientY < wb.top + 60) wrap.scrollTop -= 12; else if (e.clientY > wb.bottom - 40) wrap.scrollTop += 12; }
+    if (e.clientY < 70) window.scrollBy(0, -12); else if (e.clientY > window.innerHeight - 50) window.scrollBy(0, 12);
   });
   function pjDragEnd(e) {
     if (!pjDrag || e.pointerId !== pjDrag.id) return;
@@ -5253,7 +5271,7 @@ var Logic_ = (function () {
         missing.map(function (n) { return '<button class="chip-btn" data-act="new-user" data-name="' + esc(n) + '">+ ' + esc(n) + '</button>'; }).join('') + '</div>'
       : '';
     // 관리 칸 없음: 줄(이름)을 누르면 상세 창 (관리할 수 있는 계정은 수정·삭제, 아니면 보기만)
-    var table = '<div class="tbl-wrap" style="max-height:none"><table class="tbl us-tbl"><thead><tr>' +
+    var table = '<div class="tbl-wrap"><table class="tbl us-tbl"><thead><tr>' +
       sortHead('users', 'name', '이름') + sortHead('users', 'rank', '직위') + '<th title="업무보고 복사에 쓰는 표기 (약칭 + 직위 알파벳)">약칭 · 복사 표기</th>' +
       sortHead('users', 'role', '역할') + sortHead('users', 'projects', '참여 과제') + sortHead('users', 'active', '상태') +
       '</tr></thead><tbody>' +
@@ -7700,7 +7718,8 @@ var Logic_ = (function () {
     var byPerson = groupBy === 'person', projCol = byPerson; // 사람별로 묶을 때만 사업 칸
     var g = rpGroup(items, byPerson ? 'author' : 'project');
     var cols = (projCol ? 1 : 0) + (showAuthor ? 6 : 5) + (withStep ? 1 : 0);
-    return '<div class="tbl-wrap" style="max-height:none"><table class="tbl rp-tbl"><thead><tr>' + (projCol ? '<th>사업</th>' : '') + (showAuthor ? '<th>' + esc(authorLabel || '담당자') + '</th>' : '') +
+    // 화면 높이 안에서 스크롤 → 머리글이 늘 위에 보임
+    return '<div class="tbl-wrap"><table class="tbl rp-tbl"><thead><tr>' + (projCol ? '<th>사업</th>' : '') + (showAuthor ? '<th>' + esc(authorLabel || '담당자') + '</th>' : '') +
       '<th>세부내용</th><th>마감일</th><th>진행상태</th><th>진행도</th><th>비고</th>' + (withStep ? '<th class="sticky-act">관리</th>' : '') + '</tr></thead><tbody>' +
       g.order.map(function (k) {
         return '<tr class="rp-grp"><td colspan="' + cols + '"><span class="rp-grp-name">' + esc(k) + '</span> <span class="count">' + g.by[k].length + '건</span></td></tr>' +
@@ -8458,7 +8477,7 @@ var Logic_ = (function () {
     var groups = {}, order = [];
     items.forEach(function (x) { var k = withProject ? x.project : x.cat1; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(x); });
     var cols = 11 + (withProject ? 1 : 0);
-    return '<div class="tbl-wrap" style="max-height:none"><table class="tbl oc-tbl"><thead><tr>' + (withProject ? '<th>과제</th>' : '') +
+    return '<div class="tbl-wrap"><table class="tbl oc-tbl"><thead><tr>' + (withProject ? '<th>과제</th>' : '') +
       '<th>대분류</th><th>중분류</th><th>성과지표 (소분류)</th><th>목표치</th><th>달성치</th><th>달성률</th><th>누적 달성</th><th>예정일</th><th>완료일</th><th>상태</th><th>비고</th></tr></thead><tbody>' +
       order.map(function (k) {
         return '<tr class="rp-grp"><td colspan="' + cols + '">' + esc(k) + (withProject ? ' <span class="count">' + esc(yearLabel(yearsOf(k).filter(function (v) { return v.yearNo === groups[k][0].yearNo; })[0])) + '</span>' : '') + '</td></tr>' +
@@ -8500,7 +8519,7 @@ var Logic_ = (function () {
     var shown = all.filter(function (x) { return (!S.oc.cat1 || x.cat1 === S.oc.cat1) && (!S.oc.status || ocState(x) === S.oc.status); });
     return filters +
       '<section class="panel"><div class="panel-head"><h2>연구사업별 성과 요약</h2><span class="h-sub">' + Y + '년 연차 기준 · 줄을 누르면 그 과제로</span>' + ocSumChips(ocSummary(all)) + '</div>' +
-      '<div class="tbl-wrap" style="max-height:none"><table class="tbl"><thead><tr><th>과제</th><th>연차</th><th>지표</th><th>완료</th><th>진행</th><th>지연</th><th>평균 달성률</th><th>다음 예정</th></tr></thead><tbody>' + sumRows + '</tbody></table></div></section>' +
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>과제</th><th>연차</th><th>지표</th><th>완료</th><th>진행</th><th>지연</th><th>평균 달성률</th><th>다음 예정</th></tr></thead><tbody>' + sumRows + '</tbody></table></div></section>' +
       '<section class="panel"><div class="panel-head"><h2>전체 성과지표</h2><span class="count">' + shown.length + ' / ' + all.length + '개</span></div>' +
       (shown.length ? ocTable(shown, true, 'auto') : '<div class="empty"><strong>조건에 맞는 성과지표가 없어요</strong></div>') + '</section>';
   }
