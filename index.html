@@ -569,6 +569,10 @@ label.seg-btn { display: inline-flex; align-items: center; }
 .us-code { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--surface-3); color: var(--ink-2); font-size: 12px; font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
 .us-code-line { margin: -4px 0 0; font-size: 13px; color: var(--ink-2); }
 .us-code-line b { font-family: ui-monospace, Consolas, monospace; color: var(--accent-strong); }
+/* 과제 관리 > 메일송부현황 가져오기 > 요청자 표기 맞추기 */
+.ml-fix-tbl select.inp { min-width: 200px; max-width: 320px; }
+.ml-fix-done { margin: 0; font-size: 13px; color: var(--good-ink); font-weight: 600; }
+.ml-fix-list { margin: 8px 0; padding-left: 20px; line-height: 1.8; }
 .tag.ct { background: var(--surface); border: 1px solid var(--line-strong); color: var(--ink); font-weight: 600; padding: 0 7px; }
 .tbl.pj-tbl tr.clickable:hover td { background: var(--accent-wash); }
 .pj-name { color: var(--accent-strong); }
@@ -980,7 +984,7 @@ var Logic_ = (function () {
   /* ---------- 과제(사업) ---------- */
   // 서버 코드 지문: build.ps1이 서버 쪽 코드(logic·supa-core·서버 입구)로 만든 값을 넣음. 화면 파일과 서버에 같은 값이 들어감
   // 서버가 돌려준 값이 화면과 다르면(서버를 다시 Deploy하지 않음) 화면이 PI·PM에게 알려 줌
-  var SERVER_BUILD = '8f0c9494f1c5';
+  var SERVER_BUILD = '816aa1ae2164';
   var KINDS = ['연구', '유지보수']; // 화면에서는 '연구' → ‘연구사업’으로 보여 줌
   var RESEARCH_TYPES = ['연구용역', '일반용역', '출연과제', '정책연구']; // 연구사업 종류
   function kindOf(p) { return p && p.kind === '연구' ? '연구' : '유지보수'; }
@@ -2859,6 +2863,31 @@ var Logic_ = (function () {
         return { state: loadFor(u), info: { mails: ids.length, logs: logs.length } };
       });
     }
+    // 메일 요청자 표기를 한꺼번에 바꾸기 (예: '김나영'·'나' → '김d'). PI 전용
+    // p.pairs = [{ from: 지금 값, to: 바꿀 값 }]. 요청자가 정확히 from 인 메일만 바뀜
+    function renameMailRequesters(u, p) {
+      requirePI(u);
+      var pairs = Array.isArray(p.pairs) ? p.pairs : [];
+      if (!pairs.length) fail('바꿀 요청자를 골라 주세요.');
+      if (pairs.length > 200) fail('한 번에 200개까지만 바꿀 수 있어요.');
+      var map = {};
+      pairs.forEach(function (x) {
+        var from = str(x && x.from), to = validateText(x && x.to, '요청자', 50, true);
+        if (!from) fail('바꿀 요청자 값이 비어 있어요.');
+        if (from !== to) map[from] = to;
+      });
+      if (!Object.keys(map).length) fail('바뀌는 내용이 없어요.');
+      return store.withLock(function () {
+        var now = env.now(), ups = [];
+        store.list('mails').forEach(function (m) {
+          var key = str(m.requester);
+          if (Object.prototype.hasOwnProperty.call(map, key)) ups.push({ id: m.id, requester: map[key], updatedAt: now, updatedBy: u.name });
+        });
+        if (!ups.length) fail('바꿀 메일이 없어요. 새로고침 후 다시 확인해 주세요.');
+        store.updateMany('mails', ups);
+        return { state: loadFor(u), info: { count: ups.length } };
+      });
+    }
     function deleteMail(u, p) {
       requireMail(u);
       return store.withLock(function () {
@@ -3056,6 +3085,7 @@ var Logic_ = (function () {
         case 'importMails': return importMails(u, p);
         case 'addMailStep': return addMailStep(u, p);
         case 'clearImportedMails': return clearImportedMails(u);
+        case 'renameMailRequesters': return renameMailRequesters(u, p);
         case 'load': return { state: loadFor(u) };
         case 'saveRecord': return saveRecord(u, p);
         case 'deleteRecord': return deleteRecord(u, p);
@@ -8806,7 +8836,8 @@ var Logic_ = (function () {
     if (id && !x) { toast('기록을 찾을 수 없어요. 새로고침 후 다시 시도해 주세요.', 'error'); return; }
     var ro = !!x && !mlCanEdit(x); // 보기만
     // 드롭다운에는 ‘고르기’ 같은 빈 항목이 없음: 새 기록은 유형·사업명이 목록의 첫 번째로 미리 골라져 있음
-    var v = x || { urgency: '일반', dbDev: '', requestDate: today(), requester: S.user.name, type: L.MAIL_TYPES[0],
+    // 요청자 기본값: 내 약칭+직위 알파벳 (예: 1t, 표d. 과제 관리 > 사용자에서 정함, 약칭이 없으면 이름+알파벳)
+    var v = x || { urgency: '일반', dbDev: '', requestDate: today(), requester: personCodeOf(S.user.name), type: L.MAIL_TYPES[0],
       project: mlProjectNames()[0] || '', title: '', content: '', reviewer: '', developer: '', status: 'PM팀 검토', doneDate: '', note: '' };
     var REQ = ro ? '' : ' <em>*</em>';
     var statuses = L.MAIL_STATUSES.slice();
@@ -8834,7 +8865,11 @@ var Logic_ = (function () {
           return '<label class="check"><input type="checkbox" name="dbDev" value="' + d + '"' + (dd.indexOf(d) >= 0 ? ' checked' : '') + '> ' + d + '</label>';
         }).join('') + '</div></div></div>' +
         '<div class="form-grid four"><label class="fld"><span class="lbl">요청일' + REQ + '</span><input type="date" class="inp" name="requestDate" value="' + esc(v.requestDate) + '"></label>' +
-        '<label class="fld"><span class="lbl">요청자' + REQ + '</span><input class="inp" name="requester" maxlength="50" value="' + esc(v.requester) + '"></label>' +
+        // 요청자: 다른 사람 대신 쓸 때 고를 수 있게 PI·PEO 사용자의 약칭+직위를 자동완성으로 보여 줌
+        '<label class="fld"><span class="lbl">요청자' + REQ + '</span><input class="inp" name="requester" maxlength="50" list="ml-req-codes" value="' + esc(v.requester) + '">' +
+        '<datalist id="ml-req-codes">' + (S.data.users || []).filter(function (u) { return u.org !== 'PMO' && u.active !== false; }).map(function (u) {
+          return '<option value="' + esc(personCode(u)) + '">' + esc(u.name) + '</option>';
+        }).join('') + '</datalist></label>' +
         '<label class="fld"><span class="lbl">유형' + REQ + '</span><select class="inp" name="type">' + options(types, v.type) + '</select></label>' +
         '<label class="fld"><span class="lbl">사업명' + REQ + '</span><select class="inp" name="project">' + options(projs, v.project) + '</select></label></div>' +
         '<label class="fld"><span class="lbl">제목' + REQ + '</span><input class="inp" name="title" maxlength="200" value="' + esc(v.title) + '"></label>' +
@@ -8963,7 +8998,109 @@ var Logic_ = (function () {
       // 가져온 데이터 지우기 (다시 가져오기 전 정리용). 화면에서 직접 등록한 메일은 남음
       (imported ? '<div class="toolbar" style="margin-top:12px"><span class="hint">엑셀에서 가져온 메일이 ' + imported + '건 있어요. 다시 가져오려면 먼저 지울 수 있어요 (화면에서 직접 등록한 메일은 지워지지 않아요).</span>' +
         '<span class="spacer"></span><button class="btn danger" data-act="ml-clear-imported">가져온 데이터 지우기 (' + imported + '건)</button></div>' : '') +
-      '</div>';
+      '</div>' + mlReqFixCard();
+  }
+
+  /* ---- 요청자 표기 맞추기 (PI) ----
+   * 이미 들어간 메일의 요청자를 사용자 약칭+직위 알파벳(예: 1t, 표d)으로 한꺼번에 바꿈
+   * 지금 값마다 ‘누구인지’를 추천해 두고, PI가 확인·수정한 뒤 바꾸기를 누름 */
+  // 사용자 전체 (그만둔 사람이 쓴 옛 메일도 맞출 수 있게 비활성 사용자도 포함)
+  function mlActiveUsers() { return (S.data.users || []).slice(); }
+  function mlRankWords() { return Object.keys(L.RANK_CODES); }
+  // 이 요청자 값이 누구인지 추천 (확실하지 않으면 '' → ‘바꾸지 않음’)
+  // 메일 요청자는 PEO 쪽이므로 PI·PEO 사용자 중에서 먼저 찾고, 없으면 전체에서 찾음
+  function mlGuessUser(v, users) {
+    var peo = users.filter(function (u) { return u.org !== 'PMO'; });
+    return mlGuessIn(v, peo) || (peo.length < users.length ? mlGuessIn(v, users) : '');
+  }
+  function mlGuessIn(v, users) {
+    v = String(v || '').replace(/\s+/g, '');
+    if (!v) return '';
+    var ranks = mlRankWords(), letters = ranks.map(function (r) { return L.RANK_CODES[r]; });
+    function one(list) { return list.length === 1 ? list[0].name : ''; }
+    function stripRank(s) {
+      for (var i = 0; i < ranks.length; i++) if (s.length > ranks[i].length && s.slice(-ranks[i].length) === ranks[i]) return s.slice(0, -ranks[i].length);
+      if (s.length > 1 && letters.indexOf(s.slice(-1)) >= 0) return s.slice(0, -1);   // 예전 직위 알파벳(김d → 김)
+      return s;
+    }
+    var tries = [v];
+    if (stripRank(v) !== v) tries.push(stripRank(v));
+    for (var t = 0; t < tries.length; t++) {
+      var w = tries[t], hit;
+      if ((hit = one(users.filter(function (u) { return u.name === w; })))) return hit;           // 이름 그대로
+      if ((hit = one(users.filter(function (u) { return u.alias && u.alias === w; })))) return hit; // 약칭 그대로
+      // 이름에서 성을 뺀 앞부분 (예: ‘나’·‘나영’ → 김나영)
+      if ((hit = one(users.filter(function (u) { return u.name.length > 1 && u.name.slice(1).indexOf(w) === 0; })))) return hit;
+    }
+    return '';
+  }
+  // 바꿀 후보: 요청자 값별 건수. 이미 누군가의 약칭+직위와 같은 값은 뺌
+  function mlReqGroups() {
+    var users = mlActiveUsers(), codes = {}, cnt = {};
+    users.forEach(function (u) { codes[personCode(u)] = true; });
+    mlAll().forEach(function (x) {
+      var v = String(x.requester || '');
+      if (!v.trim() || codes[v]) return;
+      cnt[v] = (cnt[v] || 0) + 1;
+    });
+    return Object.keys(cnt).map(function (v) { return { from: v, count: cnt[v], guess: mlGuessUser(v, users) }; })
+      .sort(function (a, b) { return b.count - a.count || (a.from < b.from ? -1 : 1); });
+  }
+  function mlReqFixCard() {
+    var users = mlActiveUsers(), groups = mlReqGroups();
+    var noCode = users.filter(function (u) { return u.org === 'PEO' && u.active !== false && !u.alias && !u.rank; }).length;
+    var head = '<div class="card"><div class="card-head"><h2>요청자 표기 맞추기 <span class="h-sub">PI만</span></h2></div>' +
+      '<p class="hint" style="margin-top:0">이미 들어간 메일의 요청자를 <b>약칭+직위 알파벳</b>(예: 1t, 표d)으로 한꺼번에 바꿔요. ' +
+      '약칭·직위는 <b>과제 관리 &gt; 사용자</b>에서 정해요. 새로 쓰는 메일 기록은 쓰는 사람의 표기가 자동으로 들어가요.' +
+      (noCode ? ' <span class="warn-text">약칭·직위가 없는 사용자 ' + noCode + '명은 이름 그대로 들어가요.</span>' : '') + '</p>';
+    if (!groups.length) return head + '<p class="ml-fix-done">모든 메일의 요청자가 약칭+직위로 맞춰져 있어요.</p></div>';
+    // 고르기 목록: PI·PEO 사람 먼저, PMO는 뒤에 (이름 순 유지)
+    var opts = users.filter(function (u) { return u.org !== 'PMO'; }).concat(users.filter(function (u) { return u.org === 'PMO'; }))
+      .map(function (u) { return [u.name, u.name + ' → ' + personCode(u) + (u.active === false ? ' (사용 안 함)' : '')]; });
+    var rows = groups.map(function (g, i) {
+      return '<tr><td><b>' + esc(g.from) + '</b></td><td class="num">' + g.count + '건</td>' +
+        '<td><select class="inp" data-ml-fix="' + i + '" aria-label="' + esc(g.from) + ' 요청자를 누구로 볼지">' + options(opts, g.guess, '바꾸지 않음') + '</select></td>' +
+        '<td class="ml-fix-to" data-ml-fix-to="' + i + '">' + mlFixTo(g.guess) + '</td></tr>';
+    }).join('');
+    return head +
+      '<p class="hint">값마다 누구인지 추천해 두었어요. 맞는지 확인하고, 아니면 고쳐서 <b>바꾸기</b>를 누르세요. 추천이 없는 값은 ‘바꾸지 않음’으로 두었어요.</p>' +
+      '<div class="tbl-wrap"><table class="tbl ml-fix-tbl"><thead><tr><th>지금 요청자</th><th>메일</th><th>누구인가요</th><th>바꿀 표기</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn primary" data-act="ml-req-fix">요청자 바꾸기</button></div></div>';
+  }
+  function mlFixTo(name) {
+    if (!name) return '<span class="hint">-</span>';
+    var u = mlActiveUsers().filter(function (x) { return x.name === name; })[0];
+    return u ? '<b class="us-code">' + esc(personCode(u)) + '</b>' : '<span class="hint">-</span>';
+  }
+  // 고른 사람이 바뀌면 바로 옆 ‘바꿀 표기’도 바꿔 보여 줌
+  document.addEventListener('change', function (e) {
+    var i = e.target && e.target.getAttribute && e.target.getAttribute('data-ml-fix');
+    if (i === null || i === undefined) return;
+    var cell = document.querySelector('[data-ml-fix-to="' + i + '"]');
+    if (cell) cell.innerHTML = mlFixTo(e.target.value);
+  });
+  function mlReqFix() {
+    if (!isPI()) { toast('요청자 표기 맞추기는 PI만 할 수 있어요.', 'error'); return; }
+    var groups = mlReqGroups(), users = mlActiveUsers(), pairs = [], total = 0, lines = [];
+    groups.forEach(function (g, i) {
+      var sel = document.querySelector('[data-ml-fix="' + i + '"]'), name = sel ? sel.value : '';
+      var u = name && users.filter(function (x) { return x.name === name; })[0];
+      if (!u) return;
+      var to = personCode(u);
+      if (to === g.from) return;
+      pairs.push({ from: g.from, to: to });
+      total += g.count;
+      lines.push('<li><b>' + esc(g.from) + '</b> → <b>' + esc(to) + '</b> <span class="hint">(' + g.count + '건)</span></li>');
+    });
+    if (!pairs.length) { toast('바꿀 요청자를 하나 이상 골라 주세요.', 'error'); return; }
+    confirmBox('메일 <b>' + total + '건</b>의 요청자를 아래처럼 바꿀까요?<ul class="ml-fix-list">' + lines.join('') + '</ul>' +
+      '<span class="hint">요청자 칸만 바뀌고 다른 내용은 그대로예요.</span>', '요청자 바꾸기').then(function (ok) {
+      if (!ok) return;
+      call('renameMailRequesters', { pairs: pairs }).then(function (res) {
+        applyState(res);
+        toast('메일 ' + ((res.info || {}).count || 0) + '건의 요청자를 바꿨어요.');
+      }, noop);
+    });
   }
   function mlReadFile(file) {
     if (!file) return;
@@ -9043,6 +9180,8 @@ var Logic_ = (function () {
     'ml-edit': function (el) { openMailModal(el.getAttribute('data-id')); },
     'ml-stack': function (el) { mlToggleStack(el.getAttribute('data-id')); },
     'ml-next': function (el) { openMailStep(el.getAttribute('data-id')); },
+    // 과제 관리 > 메일송부현황 가져오기: 요청자를 약칭+직위로 한꺼번에 바꾸기 (PI)
+    'ml-req-fix': function () { mlReqFix(); },
     // 과제 관리 > 메일송부현황 가져오기: 엑셀에서 가져온 메일만 모두 지우기 (PI)
     'ml-clear-imported': function () {
       var ids = {}, n = 0;
